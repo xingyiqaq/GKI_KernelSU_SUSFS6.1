@@ -376,6 +376,14 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
+        # 69_hide_stuff.patch 依赖 SUSFS 的 bypass_orig_flow 标签，
+        # 但 SUSFS 对 android14-6.1 / android12-5.10 / android13-5.10 / android13-5.15
+        # 的补丁不包含该标签，SukiSU 补丁强行应用会导致 dentry/bypass 未使用报错
+        fb = f"{self.config.android_version}-{self.config.kernel_version}"
+        skip_versions = ["android14-6.1", "android12-5.10", "android13-5.10", "android13-5.15"]
+        if fb in skip_versions:
+            logger.info("  跳过 SukiSU 补丁（不兼容当前内核版本）")
+            return
         self._chdir(self.work_dir / "common")
         hooks_patch = self.sukisu_patch_dir / "69_hide_stuff.patch"
         if hooks_patch.exists():
