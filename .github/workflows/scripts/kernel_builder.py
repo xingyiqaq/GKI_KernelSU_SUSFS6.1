@@ -182,7 +182,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         repo_dir.mkdir(exist_ok=True)
         repo_path = repo_dir / "repo"
         if not repo_path.exists():
-            self._run_cmd(f"curl https://storage.googleapis.com/git-repo-downloads/repo > {repo_path}", check=False)
+            self._run_cmd(f"curl https://storage.googleapis.com/git-repo-downloads/repo-2.16 > {repo_path}", check=False)
             self._run_cmd(f"chmod a+rx {repo_path}", check=False)
         self.env["REPO"] = str(repo_path)
         self.shell.env = self.env
@@ -192,27 +192,54 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._chdir(self.work_dir)
         formatted_branch = self.config.formatted_branch
 
-        self._run_cmd(f"$REPO init --depth=1 --u https://android.googlesource.com/kernel/manifest "
-                     f"-b common-{formatted_branch} --repo-rev=v2.16", check=False)
+        self._run_cmd(f"$REPO init --depth=1 --manifest-url=https://android.googlesource.com/kernel/manifest "
+                     f"-b common-{formatted_branch}", check=False)
 
-        remote = subprocess.run(f"git ls-remote https://android.googlesource.com/kernel/common {formatted_branch}",
-                               shell=True, capture_output=True, text=True).stdout.strip()
-        if "deprecated" in remote:
-            manifest_path = self.work_dir / ".repo/manifests/default.xml"
-            with open(manifest_path, "r") as f:
-                content = f.read()
-            content = content.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
-            with open(manifest_path, "w") as f:
-                f.write(content)
+        # 检测是否需要 deprecated 分支前缀
+ls_remote = subprocess.run(
+    f"git ls-remote --heads https://android.googlesource.com/kernel/common {formatted_branch} 2>&1",
+    shell=True, capture_output=True, text=True
+)
+remote_output = (ls_remote.stdout + ls_remote.stderr).strip()
 
-        self.env["REMOTE_BRANCH"] = remote
-        logger.info("同步内核源代码...")
-        self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False)
+deprecated_branch = f"deprecated/{formatted_branch}"
+ls_deprecated = subprocess.run(
+    f"git ls-remote --heads https://android.googlesource.com/kernel/common {deprecated_branch} 2>&1",
+    shell=True, capture_output=True, text=True
+)
+deprecated_output = (ls_deprecated.stdout + ls_deprecated.stderr).strip()
 
-        common_dir = self.work_dir / "common"
-        if not common_dir.exists():
-            raise RuntimeError("repo sync 失败，common 目录不存在")
-        self._apply_legacy_fixes(remote)
+if remote_output and not deprecated_output:
+    logger.info(f"使用正常分支: {formatted_branch}")
+elif deprecated_output and not remote_output:
+    logger.info(f"使用 deprecated 分支: {deprecated_branch}")
+    manifest_path = self.work_dir / ".repo/manifests/default.xml"
+    if manifest_path.exists():
+        with open(manifest_path, "r") as f:
+            content = f.read()
+        content = content.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
+        with open(manifest_path, "w") as f:
+            f.write(content)
+elif deprecated_output and remote_output:
+    logger.info(f"优先使用 deprecated 分支: {deprecated_branch}")
+    manifest_path = self.work_dir / ".repo/manifests/default.xml"
+    if manifest_path.exists():
+        with open(manifest_path, "r") as f:
+            content = f.read()
+        content = content.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
+        with open(manifest_path, "w") as f:
+            f.write(content)
+else:
+    logger.warning(f"未找到分支 {formatted_branch} 或 deprecated/{formatted_branch}，尝试继续...")
+
+logger.info("同步内核源代码...")
+self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False)
+
+common_dir = self.work_dir / "common"
+if not common_dir.exists():
+    raise RuntimeError("repo sync 失败，common 目录不存在")
+self._apply_legacy_fixes(deprecated_output)
+
         logger.info("=== 内核源代码同步完成 ===")
 
     def _apply_legacy_fixes(self, remote_branch: str = ""):
@@ -456,7 +483,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     f.write(content)
 
         import datetime
-        current_time = datetime.datetime.utcnow().strftime("%a %b %d %H:%M:%S UTC %Y")
+        current_time = datetime.datetime.now(datetime.timezone.utc).strftime("%a %b %d %H:%M:%S UTC %Y")
         mkcompile_h = self.work_dir / "common/scripts/mkcompile_h"
         if mkcompile_h.exists():
             with open(mkcompile_h, "r") as f:
