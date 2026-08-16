@@ -376,18 +376,97 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
-        # 69_hide_stuff.patch 依赖 SUSFS 的 bypass_orig_flow 标签，
-        # 但 SUSFS 对 android14-6.1 / android12-5.10 / android13-5.10 / android13-5.15
-        # 的补丁不包含该标签，SukiSU 补丁强行应用会导致 dentry/bypass 未使用报错
         fb = f"{self.config.android_version}-{self.config.kernel_version}"
-        skip_versions = ["android14-6.1", "android12-5.10", "android13-5.10", "android13-5.15"]
-        if fb in skip_versions:
-            logger.info("  跳过 SukiSU 补丁（不兼容当前内核版本）")
-            return
+        # 69_hide_stuff.patch 是为 Android15/6.6 写的，直接 patch 到旧内核会因 fuzz
+        # 错位导致 unused variable/label 编译错误，改为手动精确插入
+        self._apply_sukisu_manual(fb)
+
+    def _apply_sukisu_manual(self, fb):
+        """手动将 SukiSU 的 lineage/jit-zygote-cache 隐藏逻辑精确插入内核源码"""
         self._chdir(self.work_dir / "common")
-        hooks_patch = self.sukisu_patch_dir / "69_hide_stuff.patch"
-        if hooks_patch.exists():
-            self._run_cmd(f"cp {hooks_patch} . && patch -p1 -F 3 < 69_hide_stuff.patch", check=False)
+        import re
+
+        # ===== task_mmu.c: show_map_vma =====
+        task_mmu = Path("fs/proc/task_mmu.c")
+        if task_mmu.exists():
+            with open(task_mmu, "r") as f:
+                content = f.read()
+
+            if "show_vma_header_prefix_fake" not in content:
+                # 1. 插入 show_vma_header_prefix_fake 函数
+                fake_func = """static void show_vma_header_prefix_fake(struct seq_file *m,
+					unsigned long start, unsigned long end,
+					vm_flags_t flags, unsigned long long pgoff,
+					dev_t dev, unsigned long ino)
+{
+	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
+	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
+			start, end,
+			flags & VM_READ ? 'r' : '-',
+			flags & VM_WRITE ? 'w' : '-',
+			flags & VM_EXEC ? '-' : '-',
+			flags & VM_MAYSHARE ? 's' : 'p',
+			pgoff, MAJOR(dev), MINOR(dev), ino);
+}
+
+"""
+                marker = "static void\nshow_map_vma("
+                if marker in content:
+                    content = content.replace(marker, fake_func + marker, 1)
+                    logger.info("  task_mmu.c: 已插入 show_vma_header_prefix_fake")
+
+                # 2. 在 if(file) 块末尾插入 lineage/jit-zygote-cache 检测
+                #    锚点: SUS_KSTAT #endif 后的闭合 } 之前
+                if "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT" in content:
+                    pattern = r'(\t*#[ ]*endif[ ]*//[ ]*#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\s*\n)'
+                    detection_code = r"""
+		struct dentry *sukisu_dentry = file->f_path.dentry;
+		if (sukisu_dentry) {
+			const char *sukisu_path = sukisu_dentry->d_name.name;
+			if (strstr(sukisu_path, "lineage")) {
+				unsigned long start = vma->vm_start;
+				unsigned long end = vma->vm_end;
+				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
+				seq_puts(m, "/system/framework/framework-res.apk");
+				seq_putc(m, '\n');
+				return;
+			}
+			if (strstr(sukisu_path, "jit-zygote-cache")) {
+				unsigned long start = vma->vm_start;
+				unsigned long end = vma->vm_end;
+				show_vma_header_prefix_fake(m, start, end, flags, pgoff, dev, ino);
+			}
+		}
+"""
+                    # 在 SUS_KSTAT #endif 后面追加检测代码
+                    content = re.sub(pattern, r'\1' + detection_code, content, count=1)
+                    logger.info("  task_mmu.c: 已插入 lineage/jit-zygote-cache 检测")
+
+                # 3. 确保 <linux/string.h> 已包含（strstr 需要）
+                if "#include <linux/string.h>" not in content:
+                    content = content.replace("#include <linux/sched/mm.h>",
+                                              "#include <linux/sched/mm.h>\n#include <linux/string.h>")
+                    logger.info("  task_mmu.c: 已添加 string.h 头文件")
+
+                with open(task_mmu, "w") as f:
+                    f.write(content)
+
+        # ===== base.c: mm_find_next_nonspec_vma =====
+        base_c = Path("fs/proc/base.c")
+        if base_c.exists():
+            with open(base_c, "r") as f:
+                base_content = f.read()
+
+            if "lineage" not in base_content and "mm_find_next_nonspec_vma" in base_content:
+                orig = "\tif (vma && vma->vm_file) {\n\t\t*path = vma->vm_file->f_path;\n\t\tpath_get(path);\n\t\trc = 0;\n\t}"
+                new = "\tif (vma) {\n\t\tif (vma->vm_file) {\n\t\t\tif (strstr(vma->vm_file->f_path.dentry->d_name.name, \"lineage\")) {\n\t\t\t\trc = kern_path(\"/system/framework/framework-res.apk\", LOOKUP_FOLLOW, path);\n\t\t\t} else {\n\t\t\t\t*path = vma->vm_file->f_path;\n\t\t\t\tpath_get(path);\n\t\t\t\trc = 0;\n\t\t\t}\n\t\t}\n\t}"
+                if orig in base_content:
+                    base_content = base_content.replace(orig, new)
+                    with open(base_c, "w") as f:
+                        f.write(base_content)
+                    logger.info("  base.c: 已添加 lineage 路径检测")
+                else:
+                    logger.warning("  base.c: 原始模式不匹配，跳过")
 
     def apply_zram_patches(self):
         if not self.config.use_zram:
