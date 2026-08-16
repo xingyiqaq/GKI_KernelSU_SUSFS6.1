@@ -58,8 +58,8 @@ class KSUVersion(Enum):
 
 ANDROID_KERNEL_MAP = {
     AndroidVersion.ANDROID12: [KernelVersion.KERNEL_5_10],
-    AndroidVersion.ANDROID13: [KernelVersion.KERNEL_5_10, KernelVersion.KERNEL_5_15],
-    AndroidVersion.ANDROID14: [KernelVersion.KERNEL_5_15, KernelVersion.KERNEL_6_1],
+    AndroidVersion.ANDROID13: [KernelVersion.KERNEL_5_15],
+    AndroidVersion.ANDROID14: [KernelVersion.KERNEL_6_1],
     AndroidVersion.ANDROID15: [KernelVersion.KERNEL_6_6],
 }
 
