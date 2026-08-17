@@ -58,6 +58,10 @@ on:
 
 env:
   PYTHON_VERSION: '3.10'
+  # 缓存路径常量
+  BAZEL_CACHE: /home/runner/.cache/bazel
+  TOOLCHAIN_CACHE: /home/runner/.cache/toolchain
+  KERNEL_SRC_CACHE: /home/runner/.cache/kernel-src
 
 jobs:
   prepare:
@@ -69,14 +73,9 @@ jobs:
       kernel_version: ${{ steps.generate.outputs.kernel_version }}
       classified_matrix: ${{ steps.generate.outputs.classified_matrix }}
       matrix_summary: ${{ steps.generate.outputs.matrix_summary }}
-      cache_key: ${{ steps.get_cache_key.outputs.cache_key }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-
-      - name: Get cache key
-        id: get_cache_key
-        run: echo "cache_key=${{ github.ref_name }}-ccache" >> $GITHUB_OUTPUT
 
       - name: Generate build matrix
         id: generate
@@ -91,6 +90,7 @@ jobs:
         config: ${{ fromJson(needs.prepare.outputs.build_matrix) }}
     env:
       SCRIPTS_DIR: ./.github/workflows/scripts
+
     steps:
       - name: Maximize build space
         uses: AdityaGarg8/remove-unwanted-software@v5
@@ -126,26 +126,99 @@ jobs:
           echo "$BOOT_SIGN_KEY" > toolchain/linux-x86/bin/testkey.pem
           echo "BOOT_SIGN_KEY_PATH=$GITHUB_WORKSPACE/toolchain/linux-x86/bin/testkey.pem" >> $GITHUB_ENV
 
-      - name: Configure ccache
-        run: |
-          mkdir -p ~/.cache/bazel
-          mkdir -p ~/.ccache
-          ccache --version
-          ccache --max-size=2G
-          ccache --set-config=compression=true
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-
-      - name: Restore ccache
-        id: restore-ccache
-        uses: ./.github/actions/cache-restore
+      # =========================================================
+      # 缓存层 1: 工具链 (build-tools + mkbootimg)
+      # Key 固定不变，全项目共享
+      # =========================================================
+      - name: Restore toolchain cache
+        id: cache-toolchain
+        uses: actions/cache@v4
         with:
-          cache_path: /home/runner/.ccache
-          cache_key: ${{ github.ref_name }}-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}
-          cache_bucket: ccache-cache
+          path: ${{ env.TOOLCHAIN_CACHE }}
+          key: toolchain-v1-${{ runner.os }}
+          restore-keys: |
+            toolchain-v1-${{ runner.os }}
+
+      # =========================================================
+      # 缓存层 2: 内核源码 (repo sync 结果)
+      # Key 按 android + kernel + sub_level 区分
+      # =========================================================
+      - name: Restore kernel source cache
+        id: cache-kernel-src
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.KERNEL_SRC_CACHE }}
+          key: kernel-src-v2-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}
+          restore-keys: |
+            kernel-src-v2-${{ matrix.config.android }}-${{ matrix.config.kernel }}-
+
+      # =========================================================
+      # 缓存层 3: Bazel 编译缓存 (最大收益)
+      # Key 按 android + kernel + sub_level + zram 区分
+      # =========================================================
+      - name: Restore Bazel cache
+        id: cache-bazel
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BAZEL_CACHE }}
+          key: bazel-v3-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}-${{ github.event.inputs.use_zram }}
+          restore-keys: |
+            bazel-v3-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}-
+            bazel-v3-${{ matrix.config.android }}-${{ matrix.config.kernel }}-
+
+      - name: Pre-populate build environment
+        run: |
+          mkdir -p /tmp/gki-build
+          mkdir -p ${{ env.BAZEL_CACHE }}
+
+          SCRIPTS="$GITHUB_WORKSPACE/scripts"
+
+          # 解压 toolchain（如果仓库内有打包文件）
+          if [ -f "$SCRIPTS/toolchain.tar.gz" ]; then
+            echo "从本地解压 toolchain..."
+            tar xzf "$SCRIPTS/toolchain.tar.gz" -C /tmp/gki-build
+            echo "toolchain 已就绪: $(ls /tmp/gki-build/toolchain 2>/dev/null | head -3)"
+          else
+            echo "⚠ toolchain.tar.gz 不存在，将在构建时联网克隆"
+          fi
+
+          # 解压 mkbootimg
+          if [ -f "$SCRIPTS/mkbootimg.tar.gz" ]; then
+            echo "从本地解压 mkbootimg..."
+            tar xzf "$SCRIPTS/mkbootimg.tar.gz" -C /tmp/gki-build
+            echo "mkbootimg 已就绪: $(ls /tmp/gki-build/mkbootimg 2>/dev/null | head -3)"
+          else
+            echo "⚠ mkbootimg.tar.gz 不存在，将在构建时联网克隆"
+          fi
+
+          # 复制 repo 工具脚本
+          if [ -f "$SCRIPTS/repo" ]; then
+            echo "从本地复制 repo 工具..."
+            cp "$SCRIPTS/repo" /tmp/repo
+            chmod +x /tmp/repo
+            echo "repo 已就绪: $(head -1 /tmp/repo)"
+          else
+            echo "⚠ scripts/repo 不存在，将在构建时联网下载"
+          fi
 
       - name: Build kernel
         run: |
           cd ${{ env.SCRIPTS_DIR }}
+
+          # 如果有工具链缓存，复制到 build 目录
+          if [ -d "${{ env.TOOLCHAIN_CACHE }}/toolchain" ]; then
+            echo "恢复工具链缓存..."
+            cp -r "${{ env.TOOLCHAIN_CACHE }}/toolchain" /tmp/gki-build/toolchain 2>/dev/null || true
+            cp -r "${{ env.TOOLCHAIN_CACHE }}/mkbootimg" /tmp/gki-build/mkbootimg 2>/dev/null || true
+          fi
+
+          # 如果有内核源码缓存，复制到工作目录
+          KERNEL_SRC_DIR="${{ env.KERNEL_SRC_CACHE }}/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}"
+          if [ -d "$KERNEL_SRC_DIR" ]; then
+            echo "恢复内核源码缓存..."
+            mkdir -p /tmp/gki-build
+            cp -r "$KERNEL_SRC_DIR" "/tmp/gki-build/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}"
+          fi
 
           ARGS="--android ${{ matrix.config.android }}"
           ARGS="$ARGS --kernel ${{ matrix.config.kernel }}"
@@ -154,6 +227,7 @@ jobs:
           [ -n "${{ matrix.config.revision }}" ] && ARGS="$ARGS --revision ${{ matrix.config.revision }}"
           ARGS="$ARGS --ksu-version ${{ github.event.inputs.kernelsu_version }}"
           ARGS="$ARGS --no-release"
+          ARGS="$ARGS -w /tmp/gki-build"
 
           [ "${{ github.event.inputs.use_zram }}" = "true" ] && ARGS="$ARGS --zram"
           [ "${{ github.event.inputs.use_kpm }}" = "false" ] && ARGS="$ARGS --no-kpm"
@@ -162,15 +236,32 @@ jobs:
           [ -z "${{ github.event.inputs.susfs_commit }}" ] || ARGS="$ARGS --susfs-commit=${{ github.event.inputs.susfs_commit }}"
           [ -z "${{ github.event.inputs.custom_version }}" ] || ARGS="$ARGS --custom-version=${{ github.event.inputs.custom_version }}"
 
+          echo "构建命令: python3 build.py $ARGS"
           python3 build.py $ARGS
 
-      - name: Save ccache
-        uses: ./.github/actions/cache-save
+      # =========================================================
+      # 保存缓存 (仅在构建步骤完成后)
+      # =========================================================
+      - name: Save kernel source cache
+        if: always()
+        uses: actions/cache@v4
         with:
-          cache_path: /home/runner/.ccache
-          cache_key: ${{ github.ref_name }}-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}
-          cache_bucket: ccache-cache
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ env.KERNEL_SRC_CACHE }}
+          key: kernel-src-v2-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}
+
+      - name: Save Bazel cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BAZEL_CACHE }}
+          key: bazel-v3-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}-${{ github.event.inputs.use_zram }}
+
+      - name: Save toolchain cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TOOLCHAIN_CACHE }}
+          key: toolchain-v1-${{ runner.os }}
 
       - name: Prepare artifacts
         id: prepare-artifacts
@@ -184,7 +275,6 @@ jobs:
           else
             echo "artifacts_exist=true" >> $GITHUB_OUTPUT
             ls -la artifacts/
-            # 生成 SHA256SUMS
             cd artifacts && sha256sum * > SHA256SUMS.txt && cd ..
           fi
 
@@ -199,11 +289,9 @@ jobs:
         if: always()
         run: |
           mkdir -p build-results
-          # 复制 SHA256SUMS
           if [ -f "artifacts/SHA256SUMS.txt" ]; then
             cp artifacts/SHA256SUMS.txt build-results/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}.txt
           fi
-          # 记录构建状态
           echo "${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}:outcome=${{ job.status }}" >> build-results/status.txt
 
       - name: Upload build results
@@ -267,9 +355,7 @@ jobs:
         if: steps.prepare-summary.outputs.success != '0'
         run: |
           mkdir -p release-files
-          
           python3 ${{ env.SCRIPTS_DIR }}/extract_artifacts.py all-artifacts release-files --build-results build-results
-          
           ls -la release-files/
 
       - name: Generate release body
@@ -309,7 +395,6 @@ jobs:
           SUCCESS: ${{ steps.prepare-summary.outputs.success }}
           FAILED: ${{ steps.prepare-summary.outputs.failed }}
         run: |
-          # 检查是否有成功的构建
           if [ "$SUCCESS" -gt 0 ]; then
             python3 ${{ env.SCRIPTS_DIR }}/telegram_notify.py release \
               "${{ needs.prepare.outputs.kernel_version }}" \
