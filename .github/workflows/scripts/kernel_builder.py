@@ -241,64 +241,119 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self.shell.env = self.env
         logger.info(f"repo 工具安装成功: {repo_path}")
 
+    def _fetch_manifest_branches(self):
+        """Fetch available branch names from kernel manifest repo."""
+        import urllib.request as _ur
+        import re as _re
+        try:
+            _req = _ur.Request(
+                "https://android.googlesource.com/kernel/manifest/+refs",
+                headers={"User-Agent": "curl/7.0"}
+            )
+            _resp = _ur.urlopen(_req, timeout=15)
+            _html = _resp.read().decode("utf-8", errors="replace")
+            _branches = _re.findall(r"refs/heads/([^"<> ]+)", _html)
+            return [_b for _b in _branches if _b.startswith("common-")]
+        except Exception as _e:
+            logger.warning(f"Cannot fetch manifest branches: {_e}")
+            return []
+
+    def _find_manifest_branch(self, formatted_branch):
+        """Find exact, deprecated, or closest manifest branch."""
+        target = f"common-{formatted_branch}"
+        deprecated_target = f"common-deprecated/{formatted_branch}"
+
+        import subprocess
+        ls = subprocess.run(
+            f"git ls-remote --heads https://android.googlesource.com/kernel/manifest {target} 2>&1",
+            shell=True, capture_output=True, text=True
+        )
+        if ls.stdout.strip():
+            logger.info(f"Manifest branch {target} exists")
+            return (target, False)
+
+        ls_dep = subprocess.run(
+            f"git ls-remote --heads https://android.googlesource.com/kernel/manifest {deprecated_target} 2>&1",
+            shell=True, capture_output=True, text=True
+        )
+        if ls_dep.stdout.strip():
+            logger.info(f"Manifest branch {deprecated_target} exists (deprecated)")
+            return (deprecated_target, True)
+
+        logger.warning(f"Manifest branch {target} not found, searching closest...")
+        available = self._fetch_manifest_branches()
+
+        parts = formatted_branch.split("-")
+        if len(parts) >= 3:
+            prefix = f"common-{parts[0]}-{parts[1]}-"
+        else:
+            prefix = f"common-{parts[0]}-"
+
+        candidates = [b for b in available if b.startswith(prefix)]
+
+        if candidates:
+            import re as _re
+            def _sort_key(b):
+                m = _re.search(r"(\d{4}-\d{2})$", b)
+                return m.group(1) if m else "0000-00"
+            candidates.sort(key=_sort_key)
+            closest = candidates[-1]
+            logger.info(f"Using closest available branch: {closest}")
+            return (closest, False)
+
+        android_prefix = f"common-{parts[0]}-"
+        candidates = [b for b in available if b.startswith(android_prefix)]
+        if candidates:
+            candidates.sort()
+            closest = candidates[-1]
+            logger.info(f"Using latest {parts[0]} branch: {closest}")
+            return (closest, False)
+
+        return (None, False)
+
     def init_and_sync_kernel(self):
-        logger.info("=== 初始化和同步内核源代码 ===")
+        logger.info("=== Initializing and syncing kernel source ===")
         self._chdir(self.work_dir)
         formatted_branch = self.config.formatted_branch
 
-        self._run_cmd(f"$REPO init --depth=1 --manifest-url=https://android.googlesource.com/kernel/manifest "
-                     f"-b common-{formatted_branch}", check=False)
+        manifest_branch, use_deprecated = self._find_manifest_branch(formatted_branch)
+        if manifest_branch is None:
+            raise RuntimeError(
+                f"Cannot find manifest branch common-{formatted_branch} and no fallback. "
+                f"Check android_version={self.config.android_version}, "
+                f"kernel_version={self.config.kernel_version}, "
+                f"os_patch_level={self.config.os_patch_level}. "
+                f"Available: https://android.googlesource.com/kernel/manifest/+refs"
+            )
 
-        # 检测是否需要 deprecated 分支前缀
-        ls_remote = subprocess.run(
-            f"git ls-remote --heads https://android.googlesource.com/kernel/common {formatted_branch} 2>&1",
-            shell=True, capture_output=True, text=True
+        logger.info(f"Using manifest branch: {manifest_branch}")
+        self._run_cmd(
+            "$REPO init --depth=1 --manifest-url=https://android.googlesource.com/kernel/manifest "
+            f"-b {manifest_branch}", check=False
         )
-        remote_output = (ls_remote.stdout + ls_remote.stderr).strip()
 
-        # 检查是否存在 deprecated 前缀的分支
-        deprecated_branch = f"deprecated/{formatted_branch}"
-        ls_deprecated = subprocess.run(
-            f"git ls-remote --heads https://android.googlesource.com/kernel/common {deprecated_branch} 2>&1",
-            shell=True, capture_output=True, text=True
-        )
-        deprecated_output = (ls_deprecated.stdout + ls_deprecated.stderr).strip()
-
-        if remote_output and not deprecated_output:
-            # 正常分支存在，deprecated 不存在 → 无需替换
-            logger.info(f"使用正常分支: {formatted_branch}")
-        elif deprecated_output and not remote_output:
-            # 只有 deprecated 分支 → 需要替换 manifest
-            logger.info(f"使用 deprecated 分支: {deprecated_branch}")
-            manifest_path = self.work_dir / ".repo/manifests/default.xml"
-            if manifest_path.exists():
-                with open(manifest_path, "r") as f:
-                    content = f.read()
-                content = content.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
-                with open(manifest_path, "w") as f:
-                    f.write(content)
-        elif deprecated_output and remote_output:
-            # 两者都存在，优先使用 deprecated 分支（更稳定）
-            logger.info(f"优先使用 deprecated 分支: {deprecated_branch}")
-            manifest_path = self.work_dir / ".repo/manifests/default.xml"
-            if manifest_path.exists():
-                with open(manifest_path, "r") as f:
-                    content = f.read()
-                content = content.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
-                with open(manifest_path, "w") as f:
-                    f.write(content)
-        else:
-            logger.warning(f"未找到分支 {formatted_branch} 或 deprecated/{formatted_branch}，尝试继续...")
-
-        logger.info("同步内核源代码...")
+        logger.info("Syncing kernel source...")
         self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False)
 
         common_dir = self.work_dir / "common"
         if not common_dir.exists():
-            raise RuntimeError("repo sync 失败，common 目录不存在")
-        self._apply_legacy_fixes(deprecated_output)
-        logger.info("=== 内核源代码同步完成 ===")
+            raise RuntimeError("repo sync failed, common directory not found")
 
+        if use_deprecated:
+            logger.info(f"Updating manifest to deprecated/{formatted_branch}")
+            manifest_path = self.work_dir / ".repo" / "manifests" / "default.xml"
+            if manifest_path.exists():
+                with open(manifest_path, "r") as f:
+                    mc = f.read()
+                mc = mc.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
+                with open(manifest_path, "w") as f:
+                    f.write(mc)
+                self._run_cmd(
+                    "$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False
+                )
+
+        self._apply_legacy_fixes(use_deprecated)
+        logger.info("=== Kernel source sync complete ===")
     def _apply_legacy_fixes(self, remote_branch: str = ""):
         av, kv = self.config.android_version, self.config.kernel_version
         sub = self.config.get_sub_level_int()
