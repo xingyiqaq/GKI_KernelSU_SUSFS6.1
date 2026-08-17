@@ -184,6 +184,17 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         import tempfile
 
         repo_path = "/tmp/repo"
+        # 如果 repo 脚本已存在，直接复用（预装到仓库时可跳过下载）
+        if os.path.isfile(repo_path) and os.access(repo_path, os.X_OK):
+            logger.info(f"repo 工具已存在，复用: {repo_path}")
+            with open(repo_path, "r") as f:
+                first_line = f.readline().strip()
+            logger.info(f"repo 文件首行: {first_line}")
+            self.env["REPO"] = repo_path
+            self.shell.env = self.env
+            logger.info(f"repo 工具准备完成: {repo_path}")
+            return
+
         downloaded = False
 
         # 尝试多个源下载 Google repo 脚本
@@ -415,41 +426,25 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     content = content.replace(marker, fake_func + marker, 1)
                     logger.info("  task_mmu.c: 已插入 show_vma_header_prefix_fake")
 
-                # 2. 在 if(file) 块末尾插入 lineage/jit-zygote-cache 检测
-                #    锚点: SUS_KSTAT #endif 后的闭合 } 之前
-                if "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT" in content:
-                    pattern = r'(\t*#[ ]*endif[ ]*//[ ]*#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\s*\n)'
-                    detection_code = r"""
-		struct dentry *sukisu_dentry = file->f_path.dentry;
-		if (sukisu_dentry) {
-			const char *sukisu_path = sukisu_dentry->d_name.name;
-			if (strstr(sukisu_path, "lineage")) {
-				unsigned long start = vma->vm_start;
-				unsigned long end = vma->vm_end;
-				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
-				seq_puts(m, "/system/framework/framework-res.apk");
-				seq_putc(m, '\n');
-				return;
-			}
-			if (strstr(sukisu_path, "jit-zygote-cache")) {
-				unsigned long start = vma->vm_start;
-				unsigned long end = vma->vm_end;
-				show_vma_header_prefix_fake(m, start, end, flags, pgoff, dev, ino);
-			}
-		}
-"""
-                    # 在 SUS_KSTAT #endif 后面追加检测代码
-                    content = re.sub(pattern, r'\1' + detection_code, content, count=1)
-                    logger.info("  task_mmu.c: 已插入 lineage/jit-zygote-cache 检测")
+            # 2. 插入 lineage/jit-zygote-cache 检测（独立检查，仅一次）
+            if "sukisu_file" not in content and "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT" in content:
+                if fb in ["android14-6.1", "android13-5.15", "android12-5.10"]:
+                    detection_code = "\t\tstruct file *sukisu_file = vma->vm_file;\n\t\tif (sukisu_file && sukisu_file->f_path.dentry) {\n\t\t\tconst char *sukisu_path = sukisu_file->f_path.dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
+                else:
+                    detection_code = "\t\tstruct dentry *sukisu_dentry = file->f_path.dentry;\n\t\tif (sukisu_dentry) {\n\t\t\tconst char *sukisu_path = sukisu_dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
 
-                # 3. 确保 <linux/string.h> 已包含（strstr 需要）
-                if "#include <linux/string.h>" not in content:
-                    content = content.replace("#include <linux/sched/mm.h>",
-                                              "#include <linux/sched/mm.h>\n#include <linux/string.h>")
-                    logger.info("  task_mmu.c: 已添加 string.h 头文件")
+                pattern = r'(\t*#[ ]*endif[ ]*//[ ]*#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\s*\n)'
+                content = re.sub(pattern, r'\1' + detection_code, content, count=1)
+                logger.info("  task_mmu.c: 已插入 lineage/jit-zygote-cache 检测")
 
-                with open(task_mmu, "w") as f:
-                    f.write(content)
+            # 3. 确保 <linux/string.h> 已包含（strstr 需要）
+            if "#include <linux/string.h>" not in content:
+                content = content.replace("#include <linux/sched/mm.h>",
+                                          "#include <linux/sched/mm.h>\n#include <linux/string.h>")
+                logger.info("  task_mmu.c: 已添加 string.h 头文件")
+
+            with open(task_mmu, "w") as f:
+                f.write(content)
 
         # ===== base.c: mm_find_next_nonspec_vma =====
         base_c = Path("fs/proc/base.c")
