@@ -434,7 +434,17 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     detection_code = "\t\tstruct dentry *sukisu_dentry = file->f_path.dentry;\n\t\tif (sukisu_dentry) {\n\t\t\tconst char *sukisu_path = sukisu_dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
 
                 pattern = r'(\t*#[ ]*endif[ ]*//[ ]*#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\s*\n)'
-                content = re.sub(pattern, r'\1' + detection_code, content, count=1)
+                # Skip first match (file-scope extern declaration), match second one (inside show_map_vma)
+                matches = list(re.finditer(pattern, content))
+                if len(matches) >= 2:
+                    insert_pos = matches[1].start()
+                elif len(matches) == 1:
+                    insert_pos = matches[0].start()
+                else:
+                    logger.warning("  SUS_KSTAT #endif not found, skip detection code")
+                    insert_pos = None
+                if insert_pos is not None:
+                    content = content[:insert_pos] + detection_code + content[insert_pos:]
                 logger.info("  task_mmu.c: 已插入 lineage/jit-zygote-cache 检测")
 
             # 3. 确保 <linux/string.h> 已包含（strstr 需要）
