@@ -332,6 +332,22 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             f"-b {manifest_branch}", check=False
         )
 
+        # If the manifest branch is NOT deprecated but references a non-existent kernel branch,
+        # pre-fix the manifest to use deprecated/{formatted_branch} before sync
+        if not use_deprecated:
+            manifest_path = self.work_dir / ".repo" / "manifests" / "default.xml"
+            if manifest_path.exists():
+                with open(manifest_path, "r") as f:
+                    mc = f.read()
+                if f'"{formatted_branch}"' in mc:
+                    mc_orig = mc
+                    mc = mc.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
+                    if mc != mc_orig:
+                        logger.info(f"Pre-fixing manifest: replacing {formatted_branch} with deprecated/{formatted_branch}")
+                        with open(manifest_path, "w") as f:
+                            f.write(mc)
+                        use_deprecated = True
+
         logger.info("Syncing kernel source...")
         self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False)
 
@@ -339,8 +355,8 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if not common_dir.exists():
             raise RuntimeError("repo sync failed, common directory not found")
 
-        if use_deprecated:
-            logger.info(f"Updating manifest to deprecated/{formatted_branch}")
+        if use_deprecated and not (self.work_dir / "common").exists():
+            logger.info(f"Updating manifest to deprecated/{formatted_branch} and re-syncing")
             manifest_path = self.work_dir / ".repo" / "manifests" / "default.xml"
             if manifest_path.exists():
                 with open(manifest_path, "r") as f:
