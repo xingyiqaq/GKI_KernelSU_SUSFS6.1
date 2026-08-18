@@ -274,6 +274,24 @@ jobs:
           path: ${{ env.TOOLCHAIN_CACHE }}
           key: toolchain-v1-${{ runner.os }}
 
+      - name: Upload build logs
+        if: always()
+        run: |
+          mkdir -p build-results
+          LOG_DIR="${{ github.workspace }}/build-logs"
+          if [ -d "$LOG_DIR" ] && [ -n "$(ls -A "$LOG_DIR" 2>/dev/null)" ]; then
+            ls -la "$LOG_DIR"
+            echo "Build logs found:"
+            for f in "$LOG_DIR"/*.log; do
+              if [ -f "$f" ]; then
+                cp "$f" "build-results/"
+                echo "Copied: $f"
+              fi
+            done
+          else
+            echo "No build logs found"
+          fi
+
       - name: Prepare artifacts
         id: prepare-artifacts
         run: |
@@ -311,6 +329,7 @@ jobs:
           fi
 
       - name: Upload build results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: build-results-${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}
