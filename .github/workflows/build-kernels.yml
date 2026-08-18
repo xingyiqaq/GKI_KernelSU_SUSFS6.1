@@ -237,7 +237,18 @@ jobs:
           [ -z "${{ github.event.inputs.custom_version }}" ] || ARGS="$ARGS --custom-version=${{ github.event.inputs.custom_version }}"
 
           echo "构建命令: python3 build.py $ARGS"
-          python3 build.py $ARGS
+
+          # 保存完整日志到文件
+          LOG_FILE="${{ github.workspace }}/build-logs/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}.log"
+          mkdir -p "${{ github.workspace }}/build-logs"
+          set +e
+          python3 build.py $ARGS 2>&1 | tee "$LOG_FILE"
+          BUILD_EXIT=${PIPESTATUS[0]}
+          set -e
+          echo "Build exit code: $BUILD_EXIT"
+          echo "Last 200 lines of build log:"
+          tail -200 "$LOG_FILE"
+          exit $BUILD_EXIT
 
       # =========================================================
       # 保存缓存 (仅在构建步骤完成后)
@@ -293,6 +304,11 @@ jobs:
             cp artifacts/SHA256SUMS.txt build-results/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}.txt
           fi
           echo "${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}:outcome=${{ job.status }}" >> build-results/status.txt
+          # Copy build log to build-results if exists
+          LOG_FILE="${{ github.workspace }}/build-logs/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}.log"
+          if [ -f "$LOG_FILE" ]; then
+            cp "$LOG_FILE" "build-results/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}.log"
+          fi
 
       - name: Upload build results
         uses: actions/upload-artifact@v7
