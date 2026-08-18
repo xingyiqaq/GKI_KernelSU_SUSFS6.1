@@ -819,36 +819,29 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(kconfig_path, "r") as f:
                 kc = f.read()
             kc_orig = kc
-            # Fix: Bazel Kconfig parser doesn't support || in default statements
+            # Fix || in default statements - Bazel parser doesn't support it
             kc = kc.replace(
                 'default 32768 if ARM || (ARM64 && COMPAT)',
-                'default 32768 if ARM\n\tdefault 32768 if ARM64 && COMPAT'
+                'default 32768 if ARM' + chr(10) + '\tdefault 32768 if ARM64 && COMPAT'
             )
-            # Fix: Bazel Kconfig parser may not handle comma-separated LSM list
-            kc = kc.replace(
-                'default "landlock,lockdown,yama,loadpin,safesetid,integrity,smack,selinux,tomoyo,apparmor,bpf" if DEFAULT_SECURITY_SMACK',
-                'default "landlock lockdown yama loadpin safesetid integrity smack selinux tomoyo apparmor bpf" if DEFAULT_SECURITY_SMACK'
+            # Replace the entire config LSM block with a simpler version
+            import re as _re
+            lsm_pattern = r'config LSM\n.*?help\n.*?If unsure, leave this as the default\.'
+            lsm_replacement = (
+                'config LSM\n'
+                '\tstring "Ordered list of enabled LSMs"\n'
+                '\tdefault "landlock lockdown yama loadpin safesetid integrity smack selinux tomoyo apparmor bpf"\n'
+                '\thelp\n'
+                '\t\tList of LSMs in initialization order.\n'
+                '\t\tIf unsure, leave this as the default.\n'
             )
-            kc = kc.replace(
-                'default "landlock,lockdown,yama,loadpin,safesetid,integrity,apparmor,selinux,smack,tomoyo,bpf" if DEFAULT_SECURITY_APPARMOR',
-                'default "landlock lockdown yama loadpin safesetid integrity apparmor selinux smack tomoyo bpf" if DEFAULT_SECURITY_APPARMOR'
-            )
-            kc = kc.replace(
-                'default "landlock,lockdown,yama,loadpin,safesetid,integrity,tomoyo,bpf" if DEFAULT_SECURITY_TOMOYO',
-                'default "landlock lockdown yama loadpin safesetid integrity tomoyo bpf" if DEFAULT_SECURITY_TOMOYO'
-            )
-            kc = kc.replace(
-                'default "landlock,lockdown,yama,loadpin,safesetid,integrity,bpf" if DEFAULT_SECURITY_DAC',
-                'default "landlock lockdown yama loadpin safesetid integrity bpf" if DEFAULT_SECURITY_DAC'
-            )
-            kc = kc.replace(
-                'default "landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf"',
-                'default "landlock lockdown yama loadpin safesetid integrity selinux smack tomoyo apparmor bpf"'
-            )
+            kc = _re.sub(lsm_pattern, lsm_replacement, kc, flags=_re.DOTALL)
             if kc != kc_orig:
-                logger.info("Fixed security/Kconfig for Bazel parser")
+                logger.info(f"Fixed security/Kconfig (changed {len(kc_orig)-len(kc)} chars)")
                 with open(kconfig_path, "w") as f:
                     f.write(kc)
+            else:
+                logger.warning("security/Kconfig not modified - pattern not found")
 
         try:
             if (self.work_dir / "build/build.sh").exists():
