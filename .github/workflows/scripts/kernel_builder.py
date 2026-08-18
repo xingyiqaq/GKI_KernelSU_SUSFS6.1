@@ -252,7 +252,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             )
             _resp = _ur.urlopen(_req, timeout=15)
             _html = _resp.read().decode("utf-8", errors="replace")
-            _branches = _re.findall(r"refs/heads/([^"<> ]+)", _html)
+            _branches = _re.findall(r'refs/heads/([^"<> ]+)', _html)
             return [_b for _b in _branches if _b.startswith("common-")]
         except Exception as _e:
             logger.warning(f"Cannot fetch manifest branches: {_e}")
