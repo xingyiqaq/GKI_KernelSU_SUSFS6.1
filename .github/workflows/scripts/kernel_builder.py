@@ -813,49 +813,53 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(build_config, "w") as f:
                 f.write('\n'.join(lines))
 
-                # Fix security/Kconfig for Bazel Kconfig parser compatibility
+                        # Fix security/Kconfig for Bazel Kconfig parser compatibility
         kconfig_path = self.work_dir / "common" / "security" / "Kconfig"
         if kconfig_path.exists():
             with open(kconfig_path, "r") as f:
                 kcontent = f.read()
-            lines = kcontent.split("\n")
-            logger.info("security/Kconfig has %d lines, dumping content", len(lines))
-            for idx, line in enumerate(lines):
-                logger.info("  L%03d: %s", idx+1, line)
-            # Apply ALL possible comma fixes unconditionally
             old_kcontent = kcontent
-            replacements = [
-                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,smack,selinux,tomoyo,apparmor,bpf"', '"landlock lockdown yama loadpin safesetid integrity smack selinux tomoyo apparmor bpf"'),
-                ('"smack,selinux"', '"smack selinux"'),
-                ('"smack,selinux,apparmor"', '"smack selinux apparmor"'),
-                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,bpf"', '"landlock lockdown yama loadpin safesetid integrity bpf"'),
-                ('"apparmor,smack,selinux,integrity"', '"apparmor smack selinux integrity"'),
-                ('"apparmor,selinux"', '"apparmor selinux"'),
-                ('"landlock,lockdown,yama,loadpin,safesetid,integrity"', '"landlock lockdown yama loadpin safesetid integrity"'),
-                ('"apparmor,bpf"', '"apparmor bpf"'),
-                ("default 32768 if ARM || (ARM64 && COMPAT)", "default 32768 if ARM\ndefault 32768 if ARM64 && COMPAT"),
-            ]
             modified = False
-            for old, new in replacements:
-                if old in kcontent:
-                    kcontent = kcontent.replace(old, new)
+            # Fix 1: || in default statement (line 153)
+            old_line = "\tdefault 32768 if ARM || (ARM64 && COMPAT)"
+            new_line = "\tdefault 32768 if ARM\n\tdefault 32768 if ARM64 && COMPAT"
+            if old_line in kcontent:
+                kcontent = kcontent.replace(old_line, new_line)
+                modified = True
+                logger.info("Fixed || in LSM_MMAP_MIN_ADDR default")
+            # Fix 2: comma-separated LSM lists in config LSM (lines 281-285)
+            lsm_fixes = [
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,smack,selinux,tomoyo,apparmor,bpf" if DEFAULT_SECURITY_SMACK',
+                 '"landlock lockdown yama loadpin safesetid integrity smack selinux tomoyo apparmor bpf" if DEFAULT_SECURITY_SMACK'),
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,apparmor,selinux,smack,tomoyo,bpf" if DEFAULT_SECURITY_APPARMOR',
+                 '"landlock lockdown yama loadpin safesetid integrity apparmor selinux smack tomoyo bpf" if DEFAULT_SECURITY_APPARMOR'),
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,tomoyo,bpf" if DEFAULT_SECURITY_TOMOYO',
+                 '"landlock lockdown yama loadpin safesetid integrity tomoyo bpf" if DEFAULT_SECURITY_TOMOYO'),
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,bpf" if DEFAULT_SECURITY_DAC',
+                 '"landlock lockdown yama loadpin safesetid integrity bpf" if DEFAULT_SECURITY_DAC'),
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf"',
+                 '"landlock lockdown yama loadpin safesetid integrity selinux smack tomoyo apparmor bpf"'),
+            ]
+            for old_l, new_l in lsm_fixes:
+                if old_l in kcontent:
+                    kcontent = kcontent.replace(old_l, new_l)
                     modified = True
-                    logger.info("Applied fix: %s -> %s", old[:60], new[:60])
-            # If no direct match, try generic regex
+                    logger.info("Fixed LSM default: %s", old_l[:50])
+            # Fallback: if no exact match, use regex to fix any comma in quoted default strings
             if not modified:
                 import re as _re
-                def fix_commas(m):
+                def _fix_comma(m):
                     return m.group(1) + m.group(2).replace(",", " ") + m.group(3)
-                kcontent = _re.sub(r'(default\s+")([^"]+)(",)', fix_commas, kcontent)
+                kcontent = _re.sub(r'\bdefault\s+"([^"]+)"', _fix_comma, kcontent)
                 if kcontent != old_kcontent:
                     modified = True
-                    logger.info("Applied regex fix for commas in default strings")
+                    logger.info("Applied regex fallback for comma fixes")
             if modified:
-                logger.info("Writing modified Kconfig")
+                logger.info("Writing modified Kconfig to disk")
                 with open(kconfig_path, "w") as f:
                     f.write(kcontent)
             else:
-                logger.warning("Kconfig unchanged")
+                logger.warning("Kconfig unchanged - no patterns matched")
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
