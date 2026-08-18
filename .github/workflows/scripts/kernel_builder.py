@@ -449,6 +449,32 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         ]:
             if src.exists():
                 self._run_cmd(f"cp -r {src}/* {dst}", check=False)
+        # Fix SUSFS key.h - add missing includes for asm-offsets.c compatibility
+        susfs_key_h = common_dir / "include/linux/key.h"
+        if susfs_key_h.exists():
+            with open(susfs_key_h, "r") as f:
+                kh = f.read()
+            fixed_kh = kh
+            if "#include <linux/assoc_array.h>" not in kh:
+                if "#include <linux/idr.h>" in kh:
+                    fixed_kh = kh.replace("#include <linux/idr.h>", "#include <linux/idr.h>\n#include <linux/assoc_array.h>")
+                elif "#include <linux/types.h>" in kh:
+                    fixed_kh = kh.replace("#include <linux/types.h>", "#include <linux/types.h>\n#include <linux/assoc_array.h>")
+            if fixed_kh != kh:
+                with open(susfs_key_h, "w") as f:
+                    f.write(fixed_kh)
+                logger.info("  Fixed SUSFS key.h: added assoc_array.h")
+        # Fix asm/io.h - add ioremap_prot for asm-offsets.c
+        io_h = common_dir / "arch/arm64/include/asm/io.h"
+        if io_h.exists():
+            with open(io_h, "r") as f:
+                io = f.read()
+            if "ioremap_prot" not in io:
+                ioremap_patch = "\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
+                io = io.rstrip() + ioremap_patch
+                with open(io_h, "w") as f:
+                    f.write(io)
+                logger.info("  Fixed asm/io.h: added ioremap_prot")
         if susfs_patch.exists():
             patch_file = common_dir / self.config.get_susfs_patch_filename()
             if patch_file.exists():
@@ -813,7 +839,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(build_config, "w") as f:
                 f.write('\n'.join(lines))
 
-                        # Fix security/Kconfig for Bazel Kconfig parser compatibility
+        # Fix security/Kconfig for Bazel Kconfig parser compatibility
         kconfig_path = self.work_dir / "common" / "security" / "Kconfig"
         if kconfig_path.exists():
             with open(kconfig_path, "r") as f:
