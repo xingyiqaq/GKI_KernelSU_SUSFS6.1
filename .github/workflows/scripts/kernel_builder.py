@@ -368,7 +368,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     "$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False
                 )
 
-        self._apply_legacy_fixes(use_deprecated)
+        self._apply_legacy_fixes(manifest_branch)
         logger.info("=== Kernel source sync complete ===")
     def _apply_legacy_fixes(self, remote_branch: str = ""):
         av, kv = self.config.android_version, self.config.kernel_version
