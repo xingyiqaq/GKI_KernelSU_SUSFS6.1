@@ -253,6 +253,26 @@ jobs:
       # =========================================================
       # 保存缓存 (仅在构建步骤完成后)
       # =========================================================
+      - name: Display build errors
+        if: always()
+        run: |
+          LOG_FILE="${{ github.workspace }}/build-logs/${{ matrix.config.android }}-${{ matrix.config.kernel }}-${{ matrix.config.sub_level }}.log"
+          if [ -f "$LOG_FILE" ]; then
+            echo "Log file exists, size: $(wc -c < "$LOG_FILE") bytes"
+            ERROR_COUNT=$(grep -ci "error:" "$LOG_FILE" 2>/dev/null || echo 0)
+            echo "Errors found: $ERROR_COUNT"
+            echo "### Build Errors ($ERROR_COUNT)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -n "error:" "$LOG_FILE" | tail -100 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "### Last 50 lines" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -50 "$LOG_FILE" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No build log file found"
+          fi
+
       - name: Save kernel source cache
         if: always()
         uses: actions/cache@v4
