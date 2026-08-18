@@ -813,36 +813,49 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(build_config, "w") as f:
                 f.write('\n'.join(lines))
 
-        # Fix security/Kconfig for Bazel Kconfig parser compatibility
+                # Fix security/Kconfig for Bazel Kconfig parser compatibility
         kconfig_path = self.work_dir / "common" / "security" / "Kconfig"
         if kconfig_path.exists():
             with open(kconfig_path, "r") as f:
-                kc = f.read()
-            kc_orig = kc
-            # Fix || in default statements - Bazel parser doesn't support it
-            kc = kc.replace(
-                'default 32768 if ARM || (ARM64 && COMPAT)',
-                'default 32768 if ARM' + chr(10) + '\tdefault 32768 if ARM64 && COMPAT'
-            )
-            # Replace the entire config LSM block with a simpler version
-            import re as _re
-            lsm_pattern = r'config LSM\n.*?help\n.*?If unsure, leave this as the default\.'
-            lsm_replacement = (
-                'config LSM\n'
-                '\tstring "Ordered list of enabled LSMs"\n'
-                '\tdefault "landlock lockdown yama loadpin safesetid integrity smack selinux tomoyo apparmor bpf"\n'
-                '\thelp\n'
-                '\t\tList of LSMs in initialization order.\n'
-                '\t\tIf unsure, leave this as the default.\n'
-            )
-            kc = _re.sub(lsm_pattern, lsm_replacement, kc, flags=_re.DOTALL)
-            if kc != kc_orig:
-                logger.info(f"Fixed security/Kconfig (changed {len(kc_orig)-len(kc)} chars)")
+                kcontent = f.read()
+            lines = kcontent.split("\n")
+            logger.info("security/Kconfig has %d lines, dumping content", len(lines))
+            for idx, line in enumerate(lines):
+                logger.info("  L%03d: %s", idx+1, line)
+            # Apply ALL possible comma fixes unconditionally
+            old_kcontent = kcontent
+            replacements = [
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,smack,selinux,tomoyo,apparmor,bpf"', '"landlock lockdown yama loadpin safesetid integrity smack selinux tomoyo apparmor bpf"'),
+                ('"smack,selinux"', '"smack selinux"'),
+                ('"smack,selinux,apparmor"', '"smack selinux apparmor"'),
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity,bpf"', '"landlock lockdown yama loadpin safesetid integrity bpf"'),
+                ('"apparmor,smack,selinux,integrity"', '"apparmor smack selinux integrity"'),
+                ('"apparmor,selinux"', '"apparmor selinux"'),
+                ('"landlock,lockdown,yama,loadpin,safesetid,integrity"', '"landlock lockdown yama loadpin safesetid integrity"'),
+                ('"apparmor,bpf"', '"apparmor bpf"'),
+                ("default 32768 if ARM || (ARM64 && COMPAT)", "default 32768 if ARM\ndefault 32768 if ARM64 && COMPAT"),
+            ]
+            modified = False
+            for old, new in replacements:
+                if old in kcontent:
+                    kcontent = kcontent.replace(old, new)
+                    modified = True
+                    logger.info("Applied fix: %s -> %s", old[:60], new[:60])
+            # If no direct match, try generic regex
+            if not modified:
+                import re as _re
+                def fix_commas(m):
+                    return m.group(1) + m.group(2).replace(",", " ") + m.group(3)
+                kcontent = _re.sub(r'(default\s+")([^"]+)(",)', fix_commas, kcontent)
+                if kcontent != old_kcontent:
+                    modified = True
+                    logger.info("Applied regex fix for commas in default strings")
+            if modified:
+                logger.info("Writing modified Kconfig")
                 with open(kconfig_path, "w") as f:
-                    f.write(kc)
+                    f.write(kcontent)
             else:
-                logger.warning("security/Kconfig not modified - pattern not found")
-
+                logger.warning("Kconfig unchanged")
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
