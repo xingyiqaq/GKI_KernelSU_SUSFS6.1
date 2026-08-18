@@ -482,11 +482,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     logger.info("  task_mmu.c: 已插入 show_vma_header_prefix_fake")
 
             # 2. 插入 lineage/jit-zygote-cache 检测（独立检查，仅一次）
+            # 所有内核版本统一使用 vma->vm_file（不依赖 SUS_KSTAT block 内 file 变量的作用域）
             if "sukisu_file" not in content and "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT" in content:
-                if fb in ["android14-6.1", "android13-5.15", "android12-5.10"]:
-                    detection_code = "\t\tstruct file *sukisu_file = vma->vm_file;\n\t\tif (sukisu_file && sukisu_file->f_path.dentry) {\n\t\t\tconst char *sukisu_path = sukisu_file->f_path.dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
-                else:
-                    detection_code = "\t\tstruct dentry *sukisu_dentry = file->f_path.dentry;\n\t\tif (sukisu_dentry) {\n\t\t\tconst char *sukisu_path = sukisu_dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
+                detection_code = "\t\tstruct file *sukisu_file = vma->vm_file;\n\t\tif (sukisu_file && sukisu_file->f_path.dentry) {\n\t\t\tconst char *sukisu_path = sukisu_file->f_path.dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
 
                 pattern = r'(\t*#[ ]*endif[ ]*//[ ]*#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\s*\n)'
                 # Skip first match (file-scope extern declaration), match second one (inside show_map_vma)
