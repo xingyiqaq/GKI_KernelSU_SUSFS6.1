@@ -16,7 +16,7 @@ on:
           - android13
           - android14
           - android15
-        default: android13
+        default: android14
       kernel_version:
         description: 'Kernel 版本'
         required: true
@@ -26,7 +26,7 @@ on:
           - "5.15"
           - "6.1"
           - "6.6"
-        default: "5.15"
+        default: "6.1"
       sub_level:
         description: 'Sub Level 版本'
         required: true
@@ -69,7 +69,7 @@ on:
         description: '启用 ZRAM (LZ4KD)'
         required: true
         type: boolean
-        default: false
+        default: true
       use_kpm:
         description: '启用 KPM'
         required: true
@@ -89,7 +89,7 @@ on:
         description: '设置 BBR 为默认拥塞算法'
         required: true
         type: boolean
-        default: false
+        default: true
       make_release:
         description: '创建 GitHub Release'
         required: true
@@ -99,7 +99,7 @@ on:
         description: '发送 Telegram 通知'
         required: true
         type: boolean
-        default: true
+        default: false
 
 env:
   PYTHON_VERSION: '3.10'
