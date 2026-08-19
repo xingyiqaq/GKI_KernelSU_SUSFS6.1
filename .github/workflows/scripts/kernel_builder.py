@@ -460,57 +460,83 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
     def _fix_susfs_compatibility(self, common_dir):
         logger.info("=== 修复 SUSFS 兼容性 ===")
+        import re
+
         # Fix 1: include/linux/key.h - add assoc_array.h for struct assoc_array
         key_h = common_dir / "include/linux/key.h"
         if key_h.exists():
             with open(key_h, "r") as f:
                 kh = f.read()
             if "#include <linux/assoc_array.h>" not in kh:
-                for anchor in ["#include <linux/idr.h>", "#include <linux/types.h>", "#include <linux/list.h>"]:
+                # Try multiple anchors - SUSFS key.h may not have the standard ones
+                inserted = False
+                for anchor in ["#include <linux/idr.h>", "#include <linux/types.h>",
+                               "#include <linux/list.h>", "#include <linux/spinlock.h>",
+                               "#include <linux/module.h>", "#include <linux/init.h>",
+                               "#include <linux/sched.h>"]:
                     if anchor in kh:
                         kh = kh.replace(anchor, anchor + "\n#include <linux/assoc_array.h>")
+                        inserted = True
                         break
+                if not inserted:
+                    # Fallback: insert after the first #include line
+                    first_include = re.search(r'^(#include <[^>]+>)', kh, re.MULTILINE)
+                    if first_include:
+                        pos = first_include.end()
+                        kh = kh[:pos] + "\n#include <linux/assoc_array.h>" + kh[pos:]
+                        inserted = True
+                    else:
+                        # Last resort: prepend
+                        kh = "#include <linux/assoc_array.h>\n" + kh
+                        inserted = True
                 with open(key_h, "w") as f:
                     f.write(kh)
                 logger.info("  Fixed include/linux/key.h: added assoc_array.h")
 
-        # Fix 2: include/linux/io.h - add asm/io.h so ioremap_prot declaration is available
+        # Fix 2: arch/arm64/include/asm/io.h - add ioremap_prot declaration
+        # The GKI kernels (especially 6.1) don't define ioremap_prot, but SUSFS
+        # patches add code that calls it. We need to add the declaration BEFORE
+        # any code that uses it (i.e., near the top of the file, not at the end).
+        asm_io_h = common_dir / "arch/arm64/include/asm/io.h"
+        if asm_io_h.exists():
+            with open(asm_io_h, "r") as f:
+                io = f.read()
+            if "ioremap_prot" not in io:
+                # Insert right after the last #include and any #ifndef guards
+                ioremap_def = "\n/* SUSFS compat: ioremap_prot - not defined in GKI */\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
+                # Find the end of the include block (last #include or #endif of include guards)
+                last_include = 0
+                for m in re.finditer(r'^(#include <[^>]+>|#endif)', io, re.MULTILINE):
+                    if m.group().startswith("#include"):
+                        last_include = m.end()
+                if last_include > 0:
+                    io = io[:last_include] + ioremap_def + io[last_include:]
+                else:
+                    io = ioremap_def + "\n" + io
+                with open(asm_io_h, "w") as f:
+                    f.write(io)
+                logger.info("  Fixed arch/arm64/include/asm/io.h: added ioremap_prot")
+            else:
+                logger.info("  asm/io.h already has ioremap_prot")
+
+        # Fix 3: include/linux/io.h - add asm/io.h include (so ioremap_prot is visible)
         linux_io_h = common_dir / "include/linux/io.h"
         if linux_io_h.exists():
             with open(linux_io_h, "r") as f:
                 io = f.read()
             if "#include <asm/io.h>" not in io:
-                for anchor in ["#include <linux/types.h>", "#include <linux/compiler.h>", "#ifndef __ASSEMBLY__"]:
-                    if anchor in io:
-                        io = io.replace(anchor, anchor + "\n#include <asm/io.h>")
-                        break
-                with open(linux_io_h, "w") as f:
-                    f.write(io)
-                logger.info("  Fixed include/linux/io.h: added asm/io.h include")
-
-        # Fix 3: arch/arm64/include/asm/io.h - only add ioremap_prot if truly missing
-        # (some kernels already have it; appending creates redefinition errors)
-        asm_io_h = common_dir / "arch/arm64/include/asm/io.h"
-        if asm_io_h.exists():
-            with open(asm_io_h, "r") as f:
-                io = f.read()
-            # Check if ioremap_prot is already declared/defined
-            if "ioremap_prot" not in io:
-                # Check if the SUSFS patch created an undeclared reference
-                # Insert the declaration after the file's include block
-                ioremap_def = "\n/* SUSFS compat: ioremap_prot declaration */\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
-                # Insert before the first function definition or at the end
-                import re
-                first_func = re.search(r'^(static |inline |void |u32 |phys_addr_t |resource_size_t |void __iomem \*)', io, re.MULTILINE)
-                if first_func and first_func.start() > 200:
-                    io = io[:first_func.start()] + ioremap_def + "\n" + io[first_func.start():]
+                first_include = re.search(r'^(#include <[^>]+>)', io, re.MULTILINE)
+                if first_include:
+                    pos = first_include.end()
+                    io = io[:pos] + "\n#include <asm/io.h>" + io[pos:]
+                    with open(linux_io_h, "w") as f:
+                        f.write(io)
+                    logger.info("  Fixed include/linux/io.h: added asm/io.h include")
                 else:
-                    io = io.rstrip() + ioremap_def
-                with open(asm_io_h, "w") as f:
-                    f.write(io)
-                logger.info("  Fixed arch/arm64/include/asm/io.h: added ioremap_prot")
-            else:
-                logger.info("  asm/io.h already has ioremap_prot - no fix needed")
+                    io = "#include <asm/io.h>\n" + io
+                    with open(linux_io_h, "w") as f:
+                        f.write(io)
+                    logger.info("  Fixed include/linux/io.h: prepended asm/io.h include")
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
