@@ -891,6 +891,26 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     f.write(kcontent)
             else:
                 logger.warning("Kconfig unchanged - no patterns matched")
+
+        # Fix 3: Fix TAB indentation issues in ALL Kconfig files
+        # Some Kconfig files have ---help--- lines without proper TAB prefix,
+        # causing kconf parser to fail during gki_defconfig
+        import glob as _glob
+        kconfig_files = list((self.work_dir / "common").rglob("Kconfig*"))
+        for kf in kconfig_files:
+            if kf.is_dir():
+                continue
+            with open(kf, "r") as f:
+                kc = f.read()
+            kc_orig = kc
+            # Fix: ensure ---help--- lines always start with TAB
+            import re as _re
+            kc = _re.sub(r'^---help---\s*$', '\t---help---', kc, flags=_re.MULTILINE)
+            if kc != kc_orig:
+                with open(kf, "w") as f:
+                    f.write(kc)
+                logger.info("Fixed TAB indentation in Kconfig: %s", kf.relative_to(self.work_dir))
+
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
