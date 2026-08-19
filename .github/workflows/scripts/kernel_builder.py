@@ -462,49 +462,47 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         logger.info("=== 修复 SUSFS 兼容性 ===")
         import re
 
-        # Fix 1: include/linux/key.h - add assoc_array.h for struct assoc_array
+        # Fix 1: include/linux/key.h - add UNCONDITIONAL assoc_array.h include
+        # SUSFS key.h may have #include <linux/assoc_array.h> inside #ifdef guards
+        # that are not active, so struct assoc_array is incomplete.
         key_h = common_dir / "include/linux/key.h"
         if key_h.exists():
             with open(key_h, "r") as f:
                 kh = f.read()
-            if "#include <linux/assoc_array.h>" not in kh:
-                # Try multiple anchors - SUSFS key.h may not have the standard ones
-                inserted = False
-                for anchor in ["#include <linux/idr.h>", "#include <linux/types.h>",
-                               "#include <linux/list.h>", "#include <linux/spinlock.h>",
-                               "#include <linux/module.h>", "#include <linux/init.h>",
-                               "#include <linux/sched.h>"]:
-                    if anchor in kh:
-                        kh = kh.replace(anchor, anchor + "\n#include <linux/assoc_array.h>")
-                        inserted = True
-                        break
-                if not inserted:
-                    # Fallback: insert after the first #include line
-                    first_include = re.search(r'^(#include <[^>]+>)', kh, re.MULTILINE)
-                    if first_include:
-                        pos = first_include.end()
-                        kh = kh[:pos] + "\n#include <linux/assoc_array.h>" + kh[pos:]
-                        inserted = True
-                    else:
-                        # Last resort: prepend
-                        kh = "#include <linux/assoc_array.h>\n" + kh
-                        inserted = True
+            # Always ensure assoc_array.h is included unconditionally at the top
+            # Remove any existing conditional include and add an unconditional one
+            # First, remove any existing assoc_array.h include lines (conditional or not)
+            kh_clean = re.sub(r'^\s*#include <linux/assoc_array\.h>\s*$', '', kh, flags=re.MULTILINE)
+            # Also remove conditional versions
+            kh_clean = re.sub(r'^\s*#ifdef.*$.*^\s*#include <linux/assoc_array\.h>.*^\s*#endif.*$', '', kh_clean, flags=re.MULTILINE | re.DOTALL)
+            # Find the first unconditional #include to insert after
+            first_include = re.search(r'^(#include <[^>]+>)', kh_clean, re.MULTILINE)
+            if first_include:
+                pos = first_include.end()
+                kh_clean = kh_clean[:pos] + "\n#include <linux/assoc_array.h>" + kh_clean[pos:]
+            else:
+                kh_clean = "#include <linux/assoc_array.h>\n" + kh_clean
+            if kh_clean != kh:
                 with open(key_h, "w") as f:
-                    f.write(kh)
-                logger.info("  Fixed include/linux/key.h: added assoc_array.h")
+                    f.write(kh_clean)
+                logger.info("  Fixed include/linux/key.h: unconditional assoc_array.h")
+            else:
+                logger.info("  include/linux/key.h: assoc_array.h already unconditional")
 
-        # Fix 2: arch/arm64/include/asm/io.h - add ioremap_prot declaration
-        # The GKI kernels (especially 6.1) don't define ioremap_prot, but SUSFS
-        # patches add code that calls it. We need to add the declaration BEFORE
-        # any code that uses it (i.e., near the top of the file, not at the end).
+        # Fix 2: arch/arm64/include/asm/io.h - add ioremap_prot definition
+        # Check for ACTUAL function definition, not just string presence
         asm_io_h = common_dir / "arch/arm64/include/asm/io.h"
         if asm_io_h.exists():
             with open(asm_io_h, "r") as f:
                 io = f.read()
-            if "ioremap_prot" not in io:
-                # Insert right after the last #include and any #ifndef guards
-                ioremap_def = "\n/* SUSFS compat: ioremap_prot - not defined in GKI */\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
-                # Find the end of the include block (last #include or #endif of include guards)
+            # Check for actual function definition: "static inline void __iomem *ioremap_prot"
+            has_definition = bool(re.search(
+                r'(static\s+inline\s+void\s+\*\s*ioremap_prot|void\s+\*\s*ioremap_prot)',
+                io
+            ))
+            if not has_definition:
+                # Insert right after the last #include or #endif of include guards
+                ioremap_def = "\n/* SUSFS compat: ioremap_prot - not defined in GKI kernels */\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
                 last_include = 0
                 for m in re.finditer(r'^(#include <[^>]+>|#endif)', io, re.MULTILINE):
                     if m.group().startswith("#include"):
@@ -515,11 +513,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     io = ioremap_def + "\n" + io
                 with open(asm_io_h, "w") as f:
                     f.write(io)
-                logger.info("  Fixed arch/arm64/include/asm/io.h: added ioremap_prot")
+                logger.info("  Fixed arch/arm64/include/asm/io.h: added ioremap_prot definition")
             else:
-                logger.info("  asm/io.h already has ioremap_prot")
+                logger.info("  asm/io.h already has ioremap_prot definition")
 
-        # Fix 3: include/linux/io.h - add asm/io.h include (so ioremap_prot is visible)
+        # Fix 3: include/linux/io.h - ensure asm/io.h is included so ioremap_prot is visible
         linux_io_h = common_dir / "include/linux/io.h"
         if linux_io_h.exists():
             with open(linux_io_h, "r") as f:
@@ -537,93 +535,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     with open(linux_io_h, "w") as f:
                         f.write(io)
                     logger.info("  Fixed include/linux/io.h: prepended asm/io.h include")
-
-    def apply_sukisu_patches(self):
-        logger.info("=== 应用 SukiSU 补丁 ===")
-        fb = f"{self.config.android_version}-{self.config.kernel_version}"
-        # 69_hide_stuff.patch 是为 Android15/6.6 写的，直接 patch 到旧内核会因 fuzz
-        # 错位导致 unused variable/label 编译错误，改为手动精确插入
-        self._apply_sukisu_manual(fb)
-
-    def _apply_sukisu_manual(self, fb):
-        """手动将 SukiSU 的 lineage/jit-zygote-cache 隐藏逻辑精确插入内核源码"""
-        self._chdir(self.work_dir / "common")
-        import re
-
-        # ===== task_mmu.c: show_map_vma =====
-        task_mmu = Path("fs/proc/task_mmu.c")
-        if task_mmu.exists():
-            with open(task_mmu, "r") as f:
-                content = f.read()
-
-            if "show_vma_header_prefix_fake" not in content:
-                # 1. 插入 show_vma_header_prefix_fake 函数
-                fake_func = """static void show_vma_header_prefix_fake(struct seq_file *m,
-					unsigned long start, unsigned long end,
-					vm_flags_t flags, unsigned long long pgoff,
-					dev_t dev, unsigned long ino)
-{
-	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
-	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
-			start, end,
-			flags & VM_READ ? 'r' : '-',
-			flags & VM_WRITE ? 'w' : '-',
-			flags & VM_EXEC ? '-' : '-',
-			flags & VM_MAYSHARE ? 's' : 'p',
-			pgoff, MAJOR(dev), MINOR(dev), ino);
-}
-
-"""
-                marker = "static void\nshow_map_vma("
-                if marker in content:
-                    content = content.replace(marker, fake_func + marker, 1)
-                    logger.info("  task_mmu.c: 已插入 show_vma_header_prefix_fake")
-
-            # 2. 插入 lineage/jit-zygote-cache 检测（独立检查，仅一次）
-            # 所有内核版本统一使用 vma->vm_file（不依赖 SUS_KSTAT block 内 file 变量的作用域）
-            if "sukisu_file" not in content and "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT" in content:
-                detection_code = "\t\tstruct file *sukisu_file = vma->vm_file;\n\t\tif (sukisu_file && sukisu_file->f_path.dentry) {\n\t\t\tconst char *sukisu_path = sukisu_file->f_path.dentry->d_name.name;\n\t\t\tif (strstr(sukisu_path, \"lineage\")) {\n\t\t\t\tshow_vma_header_prefix(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t\tseq_puts(m, \"/system/framework/framework-res.apk\");\n\t\t\t\tseq_putc(m, '\\n');\n\t\t\t\treturn;\n\t\t\t}\n\t\t\tif (strstr(sukisu_path, \"jit-zygote-cache\")) {\n\t\t\t\tshow_vma_header_prefix_fake(m, vma->vm_start, vma->vm_end,\n\t\t\t\t\t\tflags, pgoff, dev, ino);\n\t\t\t}\n\t\t}\n"
-
-                pattern = r'(\t*#[ ]*endif[ ]*//[ ]*#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\s*\n)'
-                # Skip first match (file-scope extern declaration), match second one (inside show_map_vma)
-                matches = list(re.finditer(pattern, content))
-                if len(matches) >= 2:
-                    insert_pos = matches[1].start()
-                elif len(matches) == 1:
-                    insert_pos = matches[0].start()
-                else:
-                    logger.warning("  SUS_KSTAT #endif not found, skip detection code")
-                    insert_pos = None
-                if insert_pos is not None:
-                    content = content[:insert_pos] + detection_code + content[insert_pos:]
-                logger.info("  task_mmu.c: 已插入 lineage/jit-zygote-cache 检测")
-
-            # 3. 确保 <linux/string.h> 已包含（strstr 需要）
-            if "#include <linux/string.h>" not in content:
-                content = content.replace("#include <linux/sched/mm.h>",
-                                          "#include <linux/sched/mm.h>\n#include <linux/string.h>")
-                logger.info("  task_mmu.c: 已添加 string.h 头文件")
-
-            with open(task_mmu, "w") as f:
-                f.write(content)
-
-        # ===== base.c: mm_find_next_nonspec_vma =====
-        base_c = Path("fs/proc/base.c")
-        if base_c.exists():
-            with open(base_c, "r") as f:
-                base_content = f.read()
-
-            if "lineage" not in base_content and "mm_find_next_nonspec_vma" in base_content:
-                orig = "\tif (vma && vma->vm_file) {\n\t\t*path = vma->vm_file->f_path;\n\t\tpath_get(path);\n\t\trc = 0;\n\t}"
-                new = "\tif (vma) {\n\t\tif (vma->vm_file) {\n\t\t\tif (strstr(vma->vm_file->f_path.dentry->d_name.name, \"lineage\")) {\n\t\t\t\trc = kern_path(\"/system/framework/framework-res.apk\", LOOKUP_FOLLOW, path);\n\t\t\t} else {\n\t\t\t\t*path = vma->vm_file->f_path;\n\t\t\t\tpath_get(path);\n\t\t\t\trc = 0;\n\t\t\t}\n\t\t}\n\t}"
-                if orig in base_content:
-                    base_content = base_content.replace(orig, new)
-                    with open(base_c, "w") as f:
-                        f.write(base_content)
-                    logger.info("  base.c: 已添加 lineage 路径检测")
-                else:
-                    logger.warning("  base.c: 原始模式不匹配，跳过")
-
     def apply_zram_patches(self):
         if not self.config.use_zram:
             return
