@@ -535,6 +535,44 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     with open(linux_io_h, "w") as f:
                         f.write(io)
                     logger.info("  Fixed include/linux/io.h: prepended asm/io.h include")
+    def apply_sukisu_patches(self):
+        logger.info("=== 应用 SukiSU 补丁 ===")
+        if not self.sukisu_patch_dir.exists():
+            logger.info("SukiSU_patch 目录不存在，跳过")
+            return
+        self._chdir(self.work_dir / "common")
+
+        # Apply 69_hide_stuff.patch
+        hide_patch = self.sukisu_patch_dir / "69_hide_stuff.patch"
+        if hide_patch.exists():
+            self._run_cmd(
+                f"git apply --check {hide_patch} 2>/dev/null && git apply {hide_patch} "
+                f"|| patch -p1 --fuzz=3 < {hide_patch}",
+                check=False
+            )
+
+        # Apply patches from hooks/
+        hooks_dir = self.sukisu_patch_dir / "hooks"
+        if hooks_dir.exists():
+            for patch_file in sorted(hooks_dir.glob("*.patch")):
+                self._run_cmd(
+                    f"git apply --check {patch_file} 2>/dev/null && git apply {patch_file} "
+                    f"|| patch -p1 --fuzz=3 < {patch_file}",
+                    check=False
+                )
+
+        # Apply patches from other/ (excluding zram, handled by apply_zram_patches)
+        other_dir = self.sukisu_patch_dir / "other"
+        if other_dir.exists():
+            for patch_file in sorted(other_dir.glob("*.patch")):
+                self._run_cmd(
+                    f"git apply --check {patch_file} 2>/dev/null && git apply {patch_file} "
+                    f"|| patch -p1 --fuzz=3 < {patch_file}",
+                    check=False
+                )
+
+        self._chdir(self.work_dir)
+
     def apply_zram_patches(self):
         if not self.config.use_zram:
             return
