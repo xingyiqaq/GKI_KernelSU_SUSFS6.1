@@ -449,38 +449,57 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         ]:
             if src.exists():
                 self._run_cmd(f"cp -r {src}/* {dst}", check=False)
-        # Fix SUSFS key.h - add missing includes for asm-offsets.c compatibility
-        susfs_key_h = common_dir / "include/linux/key.h"
-        if susfs_key_h.exists():
-            with open(susfs_key_h, "r") as f:
-                kh = f.read()
-            fixed_kh = kh
-            if "#include <linux/assoc_array.h>" not in kh:
-                if "#include <linux/idr.h>" in kh:
-                    fixed_kh = kh.replace("#include <linux/idr.h>", "#include <linux/idr.h>\n#include <linux/assoc_array.h>")
-                elif "#include <linux/types.h>" in kh:
-                    fixed_kh = kh.replace("#include <linux/types.h>", "#include <linux/types.h>\n#include <linux/assoc_array.h>")
-            if fixed_kh != kh:
-                with open(susfs_key_h, "w") as f:
-                    f.write(fixed_kh)
-                logger.info("  Fixed SUSFS key.h: added assoc_array.h")
-        # Fix asm/io.h - add ioremap_prot for asm-offsets.c
-        io_h = common_dir / "arch/arm64/include/asm/io.h"
-        if io_h.exists():
-            with open(io_h, "r") as f:
-                io = f.read()
-            if "ioremap_prot" not in io:
-                ioremap_patch = "\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
-                io = io.rstrip() + ioremap_patch
-                with open(io_h, "w") as f:
-                    f.write(io)
-                logger.info("  Fixed asm/io.h: added ioremap_prot")
         if susfs_patch.exists():
             patch_file = common_dir / self.config.get_susfs_patch_filename()
             if patch_file.exists():
                 self._chdir(common_dir)
                 self._run_cmd(f"patch -p1 --fuzz=3 < {patch_file}", check=False)
                 self._chdir(self.work_dir)
+        # Post-patch fixes: SUSFS modifies key.h/io.h but may miss needed includes
+        self._fix_susfs_compatibility(common_dir)
+
+    def _fix_susfs_compatibility(self, common_dir):
+        logger.info("=== 修复 SUSFS 兼容性 ===")
+        # Fix 1: include/linux/key.h - add assoc_array.h for struct assoc_array
+        key_h = common_dir / "include/linux/key.h"
+        if key_h.exists():
+            with open(key_h, "r") as f:
+                kh = f.read()
+            if "#include <linux/assoc_array.h>" not in kh:
+                for anchor in ["#include <linux/idr.h>", "#include <linux/types.h>", "#include <linux/list.h>"]:
+                    if anchor in kh:
+                        kh = kh.replace(anchor, anchor + "\n#include <linux/assoc_array.h>")
+                        break
+                with open(key_h, "w") as f:
+                    f.write(kh)
+                logger.info("  Fixed include/linux/key.h: added assoc_array.h")
+
+        # Fix 2: include/linux/io.h - add asm/io.h include for ioremap_prot
+        linux_io_h = common_dir / "include/linux/io.h"
+        if linux_io_h.exists():
+            with open(linux_io_h, "r") as f:
+                io = f.read()
+            if "ioremap_prot" in io and "#include <asm/io.h>" not in io:
+                # Find a good insertion point
+                for anchor in ["#include <linux/types.h>", "#include <linux/compiler.h>", "#ifndef __ASSEMBLY__"]:
+                    if anchor in io:
+                        io = io.replace(anchor, anchor + "\n#include <asm/io.h>")
+                        break
+                with open(linux_io_h, "w") as f:
+                    f.write(io)
+                logger.info("  Fixed include/linux/io.h: added asm/io.h include")
+
+        # Fix 3: arch/arm64/include/asm/io.h - ensure ioremap_prot exists
+        asm_io_h = common_dir / "arch/arm64/include/asm/io.h"
+        if asm_io_h.exists():
+            with open(asm_io_h, "r") as f:
+                io = f.read()
+            if "ioremap_prot" not in io:
+                ioremap_def = "\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
+                io = io.rstrip() + ioremap_def
+                with open(asm_io_h, "w") as f:
+                    f.write(io)
+                logger.info("  Fixed arch/arm64/include/asm/io.h: added ioremap_prot")
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
