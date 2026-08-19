@@ -474,13 +474,12 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     f.write(kh)
                 logger.info("  Fixed include/linux/key.h: added assoc_array.h")
 
-        # Fix 2: include/linux/io.h - add asm/io.h include for ioremap_prot
+        # Fix 2: include/linux/io.h - add asm/io.h so ioremap_prot declaration is available
         linux_io_h = common_dir / "include/linux/io.h"
         if linux_io_h.exists():
             with open(linux_io_h, "r") as f:
                 io = f.read()
-            if "ioremap_prot" in io and "#include <asm/io.h>" not in io:
-                # Find a good insertion point
+            if "#include <asm/io.h>" not in io:
                 for anchor in ["#include <linux/types.h>", "#include <linux/compiler.h>", "#ifndef __ASSEMBLY__"]:
                     if anchor in io:
                         io = io.replace(anchor, anchor + "\n#include <asm/io.h>")
@@ -489,17 +488,29 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     f.write(io)
                 logger.info("  Fixed include/linux/io.h: added asm/io.h include")
 
-        # Fix 3: arch/arm64/include/asm/io.h - ensure ioremap_prot exists
+        # Fix 3: arch/arm64/include/asm/io.h - only add ioremap_prot if truly missing
+        # (some kernels already have it; appending creates redefinition errors)
         asm_io_h = common_dir / "arch/arm64/include/asm/io.h"
         if asm_io_h.exists():
             with open(asm_io_h, "r") as f:
                 io = f.read()
+            # Check if ioremap_prot is already declared/defined
             if "ioremap_prot" not in io:
-                ioremap_def = "\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
-                io = io.rstrip() + ioremap_def
+                # Check if the SUSFS patch created an undeclared reference
+                # Insert the declaration after the file's include block
+                ioremap_def = "\n/* SUSFS compat: ioremap_prot declaration */\nstatic inline void __iomem *ioremap_prot(phys_addr_t offset, size_t size, unsigned int prot)\n{\n\treturn ioremap(offset, size);\n}\n"
+                # Insert before the first function definition or at the end
+                import re
+                first_func = re.search(r'^(static |inline |void |u32 |phys_addr_t |resource_size_t |void __iomem \*)', io, re.MULTILINE)
+                if first_func and first_func.start() > 200:
+                    io = io[:first_func.start()] + ioremap_def + "\n" + io[first_func.start():]
+                else:
+                    io = io.rstrip() + ioremap_def
                 with open(asm_io_h, "w") as f:
                     f.write(io)
                 logger.info("  Fixed arch/arm64/include/asm/io.h: added ioremap_prot")
+            else:
+                logger.info("  asm/io.h already has ioremap_prot - no fix needed")
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
