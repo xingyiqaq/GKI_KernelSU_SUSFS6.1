@@ -892,10 +892,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             else:
                 logger.warning("Kconfig unchanged - no patterns matched")
 
-        # Fix 3: Fix Kconfig syntax issues to prevent gki_defconfig failure
-        # Scan ALL Kconfig files and apply line-by-line normalization:
-        # - Ensure ---help--- has TAB prefix (required by kconf parser)
-        # - Ensure config options inside blocks have proper TAB indentation
+        # Fix 3: Fix ALL Kconfig syntax issues to prevent gki_defconfig failure
+        # The kconf parser is strict about TAB indentation and line format.
+        # Fix every Kconfig file comprehensively.
+        import re as _re
         import glob as _glob
         kconfig_files = list((self.work_dir / "common").rglob("Kconfig*"))
         for kf in kconfig_files:
@@ -908,40 +908,40 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             except Exception:
                 continue
             kc_orig = kc
+            # Fix A: ---help--- must have TAB prefix
+            kc = _re.sub(r'^\s*---help---\s*$', '\t---help---', kc, flags=_re.MULTILINE)
+            # Fix B: bare "help" lines (some kernels use this format)
+            kc = _re.sub(r'^(\s*)help\s*$', '\thelp', kc, flags=_re.MULTILINE)
+            # Fix C: help text lines immediately after ---help---
+            # must also have TAB prefix (they form the help block)
             lines = kc.split("\n")
             new_lines = []
-            in_block = False
+            in_help = False
             for line in lines:
-                line = line.rstrip()
-                stripped = line.lstrip("\t")
-                stripped_ns = stripped.lstrip()
-                if stripped_ns.startswith("config ") or stripped_ns.startswith("menuconfig "):
-                    in_block = True
-                    new_lines.append(line)
-                elif stripped_ns.startswith("endmenu") or stripped_ns.startswith("endif"):
-                    in_block = False
-                    new_lines.append(line)
-                elif stripped_ns == "---help---" or stripped_ns.startswith("---help---"):
-                    new_lines.append("\t" + stripped_ns)
-                elif in_block and stripped_ns.startswith("help") and not stripped_ns.startswith("---help---"):
-                    new_lines.append("\t" + stripped_ns)
-                elif in_block and stripped_ns.startswith(
-                    ("default ", "select ", "depends on ", "range ",
-                     "imply ", "if ", "choice ", "endchoice ",
-                     "menu ", "endmenu ", "source ",
-                     "bool ", "tristate ", "string ", "int ", "hex ")):
-                    if not line.startswith("\t"):
-                        new_lines.append("\t" + stripped_ns)
+                stripped = line.lstrip()
+                if stripped == "---help---":
+                    new_lines.append("\t---help---")
+                    in_help = True
+                    continue
+                if in_help:
+                    # Help text lines: any non-empty line that does not start with TAB
+                    # and is not a Kconfig directive gets TAB prefix
+                    if stripped and not line.startswith("\t") and not any(
+                        stripped.startswith(d) for d in
+                        ["config", "menuconfig", "choice", "endchoice",
+                         "menu", "endmenu", "if", "endif", "source",
+                         "default", "depends", "select", "help", "---help---"]):
+                        new_lines.append("\t" + line)
                     else:
+                        in_help = False
                         new_lines.append(line)
                 else:
                     new_lines.append(line)
-            kc_new = "\n".join(new_lines)
-            if kc_new != kc:
+            kc = "\n".join(new_lines)
+            if kc != kc_orig:
                 with open(kf, "w") as f:
-                    f.write(kc_new)
-                logger.info("Fixed Kconfig indentation: %s", kf.relative_to(self.work_dir))
-
+                    f.write(kc)
+                logger.info("Fixed Kconfig: %s", kf.relative_to(self.work_dir))
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
