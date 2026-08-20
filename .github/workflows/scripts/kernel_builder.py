@@ -892,9 +892,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             else:
                 logger.warning("Kconfig unchanged - no patterns matched")
 
-        # Fix 3: Fix ALL Kconfig syntax issues to prevent gki_defconfig failure
-        # The kconf parser is strict about TAB indentation and line format.
-        # Fix every Kconfig file comprehensively.
+        # Fix 3: Strip ALL help text from Kconfig for GKI kconf compatibility
         import re as _re
         kconfig_files = list((self.work_dir / "common").rglob("Kconfig*"))
         for kf in kconfig_files:
@@ -907,47 +905,35 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             except Exception:
                 continue
             kc_orig = kc
-            # Normalize line endings first
             kc = kc.replace("\r\n", "\n").replace("\r", "\n")
-            # Fix A: Convert ---help--- to \thelp (strip surrounding whitespace too)
-            kc = _re.sub(r'[ \t]*---help---[ \t]*', '\thelp', kc)
-            # Fix B: process line-by-line
-            lines = kc.split("\n")
+            lines2 = kc.split("\n")
             new_lines = []
             in_help = False
-            # Only STRUCTURAL directives end a help block (not "default", "depends", etc.
-            # which can appear as plain words inside help text)
-            _HELPMODE_EXIT = frozenset([
-                "config", "menuconfig", "choice", "endchoice",
-                "menu", "endmenu", "source", "option", "comment",
-            ])
-            for line in lines:
+            for line in lines2:
                 stripped = line.lstrip(" \t")
+                is_help_start = False
                 if stripped in ("help", "\thelp"):
-                    new_lines.append("\thelp")
+                    is_help_start = True
+                elif "---help---" in stripped:
+                    is_help_start = True
+                if is_help_start:
                     in_help = True
                     continue
                 if in_help:
                     if not stripped:
-                        # Blank line inside help block - skip, do NOT exit help mode
+                        in_help = False
                         continue
-                    # Check only structural directives to exit help mode
                     first_word = stripped.split()[0] if stripped.split() else ""
-                    if first_word in _HELPMODE_EXIT and not line.startswith("\t"):
+                    if first_word in ("config", "menuconfig", "choice", "endchoice", "menu", "endmenu", "source", "option", "comment") and not line.startswith("\t"):
                         in_help = False
                         new_lines.append(line)
-                    else:
-                        if not line.startswith("\t"):
-                            new_lines.append("\t" + stripped)
-                        else:
-                            new_lines.append(line)
                 else:
                     new_lines.append(line)
             kc = "\n".join(new_lines)
             if kc != kc_orig:
                 with open(kf, "w") as f:
                     f.write(kc)
-                logger.info("Fixed Kconfig: %s", kf.relative_to(self.work_dir))
+                logger.info("Stripped help from Kconfig: %s", kf.relative_to(self.work_dir))
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式 (with /usr/bin in PATH)...")
