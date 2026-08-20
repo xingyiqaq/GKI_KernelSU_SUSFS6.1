@@ -930,6 +930,21 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 with open(kf, "w") as f:
                     f.write(kc)
                 logger.info("Stripped help from Kconfig: %s", kf.relative_to(self.work_dir))
+        # Fix: Enable CONFIG_MODULES for module build step
+        config_file = self.work_dir / "common" / ".config"
+        if config_file.exists():
+            with open(config_file, "r") as _f:
+                _cfg = _f.read()
+            _cfg_modified = False
+            if "CONFIG_MODULES=y" not in _cfg:
+                _cfg = _cfg.replace("CONFIG_MODULES=n", "CONFIG_MODULES=y")
+                if "CONFIG_MODULES=y" not in _cfg:
+                    _cfg += "\nCONFIG_MODULES=y\n"
+                _cfg_modified = True
+            if _cfg_modified:
+                with open(config_file, "w") as _f:
+                    _f.write(_cfg)
+                logger.info("Enabled CONFIG_MODULES in .config")
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式 (with /usr/bin in PATH)...")
