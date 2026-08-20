@@ -896,7 +896,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         # The kconf parser is strict about TAB indentation and line format.
         # Fix every Kconfig file comprehensively.
         import re as _re
-        import glob as _glob
         kconfig_files = list((self.work_dir / "common").rglob("Kconfig*"))
         for kf in kconfig_files:
             if kf.is_dir():
@@ -908,12 +907,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             except Exception:
                 continue
             kc_orig = kc
-            # Fix A: Convert ---help--- to help (kconf native syntax)
-            kc = _re.sub(r'^[ \t]*---help---[ \t]*$', '\thelp', kc, flags=_re.MULTILINE)
-            # Fix B: bare "help" lines without TAB
-            kc = _re.sub(r'^[ \t]*help[ \t]*$', '\thelp', kc, flags=_re.MULTILINE)
-            # Fix C: help text lines after help/---help--- must have TAB prefix
-            # Use WORD BOUNDARY check for directives (don't match inside words)
+            # Normalize line endings first
+            kc = kc.replace("\r\n", "\n").replace("\r", "\n")
+            # Fix A: Convert ---help--- to \thelp (handle any whitespace/line endings)
+            kc = _re.sub(r'---help---', '\thelp', kc)
+            # Fix B: bare "help" lines without TAB (line-level match after normalization)
             lines = kc.split("\n")
             new_lines = []
             in_help = False
@@ -922,11 +920,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 "menu", "endmenu", "if", "endif", "source",
                 "default", "depends", "select", "help",
                 "tristate", "bool", "hex", "string", "integer", "range",
-                "option", "comment", "visible", "config",
+                "option", "comment", "visible",
             ])
             for line in lines:
                 stripped = line.lstrip(" \t")
-                # Check if line is a real Kconfig directive
+                # Check if line is a real Kconfig directive (exact word match)
                 is_directive = False
                 for d in _DIRECTIVES:
                     if stripped == d or stripped.startswith(d + " ") or stripped.startswith(d + "\t") or stripped.startswith(d + "="):
@@ -944,7 +942,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                         in_help = False
                         new_lines.append(line)
                     else:
-                        # Help text: ensure TAB prefix
                         if not line.startswith("\t"):
                             new_lines.append("\t" + stripped)
                         else:
@@ -958,8 +955,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 logger.info("Fixed Kconfig: %s", kf.relative_to(self.work_dir))
         try:
             if (self.work_dir / "build/build.sh").exists():
-                logger.info("使用旧版构建方式...")
-                result = self._run_cmd("LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC=\"/usr/bin/ccache clang\"", check=False)
+                logger.info("使用旧版构建方式 (with /usr/bin in PATH)...")
+                # Prepend /usr/bin to PATH to fix missing ld/linker issue
+                env_patch = "PATH=/usr/bin:/usr/local/bin:$PATH"
+                result = self._run_cmd(f'{env_patch} LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"', check=False)
             else:
                 logger.info("使用 Bazel 构建方式...")
                 result = self._run_cmd("tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist", check=False)
