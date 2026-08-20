@@ -909,36 +909,31 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             kc_orig = kc
             # Normalize line endings first
             kc = kc.replace("\r\n", "\n").replace("\r", "\n")
-            # Fix A: Convert ---help--- to \thelp (handle any whitespace/line endings)
-            kc = _re.sub(r'---help---', '\thelp', kc)
-            # Fix B: bare "help" lines without TAB (line-level match after normalization)
+            # Fix A: Convert ---help--- to \thelp (strip surrounding whitespace too)
+            kc = _re.sub(r'[ \t]*---help---[ \t]*', '\thelp', kc)
+            # Fix B: process line-by-line
             lines = kc.split("\n")
             new_lines = []
             in_help = False
-            _DIRECTIVES = frozenset([
+            # Only STRUCTURAL directives end a help block (not "default", "depends", etc.
+            # which can appear as plain words inside help text)
+            _HELPMODE_EXIT = frozenset([
                 "config", "menuconfig", "choice", "endchoice",
-                "menu", "endmenu", "if", "endif", "source",
-                "default", "depends", "select", "help",
-                "tristate", "bool", "hex", "string", "integer", "range",
-                "option", "comment", "visible",
+                "menu", "endmenu", "source", "option", "comment",
             ])
             for line in lines:
                 stripped = line.lstrip(" \t")
-                # Check if line is a real Kconfig directive (exact word match)
-                is_directive = False
-                for d in _DIRECTIVES:
-                    if stripped == d or stripped.startswith(d + " ") or stripped.startswith(d + "\t") or stripped.startswith(d + "="):
-                        is_directive = True
-                        break
-                if stripped == "help":
+                if stripped in ("help", "\thelp"):
                     new_lines.append("\thelp")
                     in_help = True
                     continue
                 if in_help:
                     if not stripped:
-                        in_help = False
-                        new_lines.append(line)
-                    elif is_directive:
+                        # Blank line inside help block - skip, do NOT exit help mode
+                        continue
+                    # Check only structural directives to exit help mode
+                    first_word = stripped.split()[0] if stripped.split() else ""
+                    if first_word in _HELPMODE_EXIT and not line.startswith("\t"):
                         in_help = False
                         new_lines.append(line)
                     else:
