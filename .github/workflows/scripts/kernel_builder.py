@@ -908,33 +908,47 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             except Exception:
                 continue
             kc_orig = kc
-            # Fix A: ---help--- must have TAB prefix
-            kc = _re.sub(r'^\s*---help---\s*$', '\t---help---', kc, flags=_re.MULTILINE)
-            # Fix B: bare "help" lines (some kernels use this format)
-            kc = _re.sub(r'^(\s*)help\s*$', '\thelp', kc, flags=_re.MULTILINE)
-            # Fix C: help text lines immediately after ---help---
-            # must also have TAB prefix (they form the help block)
+            # Fix A: Convert ---help--- to help (kconf native syntax)
+            kc = _re.sub(r'^[ \t]*---help---[ \t]*$', '\thelp', kc, flags=_re.MULTILINE)
+            # Fix B: bare "help" lines without TAB
+            kc = _re.sub(r'^[ \t]*help[ \t]*$', '\thelp', kc, flags=_re.MULTILINE)
+            # Fix C: help text lines after help/---help--- must have TAB prefix
+            # Use WORD BOUNDARY check for directives (don't match inside words)
             lines = kc.split("\n")
             new_lines = []
             in_help = False
+            _DIRECTIVES = frozenset([
+                "config", "menuconfig", "choice", "endchoice",
+                "menu", "endmenu", "if", "endif", "source",
+                "default", "depends", "select", "help",
+                "tristate", "bool", "hex", "string", "integer", "range",
+                "option", "comment", "visible", "config",
+            ])
             for line in lines:
-                stripped = line.lstrip()
-                if stripped == "---help---":
-                    new_lines.append("\t---help---")
+                stripped = line.lstrip(" \t")
+                # Check if line is a real Kconfig directive
+                is_directive = False
+                for d in _DIRECTIVES:
+                    if stripped == d or stripped.startswith(d + " ") or stripped.startswith(d + "\t") or stripped.startswith(d + "="):
+                        is_directive = True
+                        break
+                if stripped == "help":
+                    new_lines.append("\thelp")
                     in_help = True
                     continue
                 if in_help:
-                    # Help text lines: any non-empty line that does not start with TAB
-                    # and is not a Kconfig directive gets TAB prefix
-                    if stripped and not line.startswith("\t") and not any(
-                        stripped.startswith(d) for d in
-                        ["config", "menuconfig", "choice", "endchoice",
-                         "menu", "endmenu", "if", "endif", "source",
-                         "default", "depends", "select", "help", "---help---"]):
-                        new_lines.append("\t" + line)
-                    else:
+                    if not stripped:
                         in_help = False
                         new_lines.append(line)
+                    elif is_directive:
+                        in_help = False
+                        new_lines.append(line)
+                    else:
+                        # Help text: ensure TAB prefix
+                        if not line.startswith("\t"):
+                            new_lines.append("\t" + stripped)
+                        else:
+                            new_lines.append(line)
                 else:
                     new_lines.append(line)
             kc = "\n".join(new_lines)
