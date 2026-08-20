@@ -909,24 +909,26 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             lines2 = kc.split("\n")
             new_lines = []
             in_help = False
+            _HELP_EXIT = frozenset(["config", "menuconfig", "choice", "endchoice",
+                "menu", "endmenu", "source", "option", "comment"])
             for line in lines2:
                 stripped = line.lstrip(" \t")
-                is_help_start = False
-                if stripped in ("help", "\thelp"):
-                    is_help_start = True
-                elif "---help---" in stripped:
-                    is_help_start = True
+                # Detect help block start
+                is_help_start = (stripped == "help" or stripped == "\thelp"
+                    or "---help---" in stripped)
                 if is_help_start:
                     in_help = True
                     continue
                 if in_help:
                     if not stripped:
-                        in_help = False
+                        # Blank line inside help: skip, STAY in help mode
                         continue
+                    # Structural directive at column 0 ends help block
                     first_word = stripped.split()[0] if stripped.split() else ""
-                    if first_word in ("config", "menuconfig", "choice", "endchoice", "menu", "endmenu", "source", "option", "comment") and not line.startswith("\t"):
+                    if first_word in _HELP_EXIT and not line.startswith("\t"):
                         in_help = False
                         new_lines.append(line)
+                    # else: skip help text line entirely
                 else:
                     new_lines.append(line)
             kc = "\n".join(new_lines)
