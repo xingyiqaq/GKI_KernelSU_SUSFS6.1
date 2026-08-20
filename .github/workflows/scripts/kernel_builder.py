@@ -893,31 +893,54 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 logger.warning("Kconfig unchanged - no patterns matched")
 
         # Fix 3: Fix Kconfig syntax issues to prevent gki_defconfig failure
-        # Scan ALL Kconfig files and fix common syntax problems that break
-        # the kconf parser (e.g., missing TAB before ---help---, bad indentation)
+        # Scan ALL Kconfig files and apply line-by-line normalization:
+        # - Ensure ---help--- has TAB prefix (required by kconf parser)
+        # - Ensure config options inside blocks have proper TAB indentation
         import glob as _glob
         kconfig_files = list((self.work_dir / "common").rglob("Kconfig*"))
         for kf in kconfig_files:
             if kf.is_dir():
                 continue
             try:
-                with open(kf, "r") as f:
-                    kc = f.read()
+                with open(kf, "rb") as f:
+                    kc_bytes = f.read()
+                kc = kc_bytes.decode("utf-8", errors="replace")
             except Exception:
                 continue
             kc_orig = kc
-            import re as _re
-            # Fix 3a: ensure ---help--- lines always have TAB prefix
-            # (even if they already have some whitespace, normalize to exactly one TAB)
-            kc = _re.sub(r'^\s*---help---\s*$', '\t---help---', kc, flags=_re.MULTILINE)
-            # Fix 3b: ensure config/menuconfig lines have TAB prefix
-            # Some kernels have config lines without TAB which breaks nested parsing
-            kc = _re.sub(r'^(config|menuconfig|choice|endchoice|menu|endmenu|if|endif|source)(?!.*\t)',
-                         lambda m: '\t' + m.group(0), kc, flags=_re.MULTILINE)
-            if kc != kc_orig:
+            lines = kc.split("\n")
+            new_lines = []
+            in_block = False
+            for line in lines:
+                line = line.rstrip()
+                stripped = line.lstrip("\t")
+                stripped_ns = stripped.lstrip()
+                if stripped_ns.startswith("config ") or stripped_ns.startswith("menuconfig "):
+                    in_block = True
+                    new_lines.append(line)
+                elif stripped_ns.startswith("endmenu") or stripped_ns.startswith("endif"):
+                    in_block = False
+                    new_lines.append(line)
+                elif stripped_ns == "---help---" or stripped_ns.startswith("---help---"):
+                    new_lines.append("\t" + stripped_ns)
+                elif in_block and stripped_ns.startswith("help") and not stripped_ns.startswith("---help---"):
+                    new_lines.append("\t" + stripped_ns)
+                elif in_block and stripped_ns.startswith(
+                    ("default ", "select ", "depends on ", "range ",
+                     "imply ", "if ", "choice ", "endchoice ",
+                     "menu ", "endmenu ", "source ",
+                     "bool ", "tristate ", "string ", "int ", "hex ")):
+                    if not line.startswith("\t"):
+                        new_lines.append("\t" + stripped_ns)
+                    else:
+                        new_lines.append(line)
+                else:
+                    new_lines.append(line)
+            kc_new = "\n".join(new_lines)
+            if kc_new != kc:
                 with open(kf, "w") as f:
-                    f.write(kc)
-                logger.info("Fixed Kconfig syntax: %s", kf.relative_to(self.work_dir))
+                    f.write(kc_new)
+                logger.info("Fixed Kconfig indentation: %s", kf.relative_to(self.work_dir))
 
         try:
             if (self.work_dir / "build/build.sh").exists():
