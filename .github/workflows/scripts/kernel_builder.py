@@ -955,10 +955,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 logger.info("使用旧版构建方式 (with /usr/bin in PATH)...")
                 # Prepend /usr/bin to PATH to fix missing ld/linker issue
                 env_patch = "PATH=/usr/bin:/usr/local/bin:$PATH"
-                result = self._run_cmd(f'{env_patch} LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang"', check=False)
+                result = self._run_cmd(f'{env_patch} LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CONFIG_MODULES=y CC="/usr/bin/ccache clang"', check=False)
             else:
                 logger.info("使用 Bazel 构建方式...")
-                result = self._run_cmd("tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist", check=False)
+                result = self._run_cmd("CONFIG_MODULES=y tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist", check=False)
 
             if result.returncode == 0:
                 logger.info("=== 内核编译成功 ===")
