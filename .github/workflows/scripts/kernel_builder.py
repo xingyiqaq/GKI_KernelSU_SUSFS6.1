@@ -682,6 +682,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 _bc = _bc.replace("CONFIG_MODULES=n", "CONFIG_MODULES=y")
                 if "CONFIG_MODULES=y" not in _bc:
                     _bc += "\nCONFIG_MODULES=y\n"
+                    _bc += "\nCONFIG_FRAME_WARN=2048\n"
                 with open(build_config_a64, "w") as _f:
                     _f.write(_bc)
                 logger.info("Enabled CONFIG_MODULES in build.config.gki.aarch64")
