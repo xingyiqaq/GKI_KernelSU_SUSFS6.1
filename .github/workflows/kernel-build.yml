@@ -131,7 +131,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
-          sudo apt install -y ccache python3 git curl wget zip unzip
+          sudo apt install -y bc ccache python3 git curl wget zip unzip
           pip install PyYAML
 
       - name: Configure ccache
