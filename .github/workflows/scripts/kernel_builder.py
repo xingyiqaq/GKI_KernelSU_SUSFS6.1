@@ -672,6 +672,19 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(build_config, "w") as f:
                 f.write(content)
 
+        # Also enable CONFIG_MODULES in build.config.gki.aarch64
+        build_config_a64 = self.work_dir / "common/build.config.gki.aarch64"
+        if build_config_a64.exists():
+            with open(build_config_a64, "r") as _f:
+                _bc = _f.read()
+            if "CONFIG_MODULES=y" not in _bc:
+                _bc = _bc.replace("CONFIG_MODULES=n", "CONFIG_MODULES=y")
+                if "CONFIG_MODULES=y" not in _bc:
+                    _bc += "\nCONFIG_MODULES=y\n"
+                with open(build_config_a64, "w") as _f:
+                    _f.write(_bc)
+                logger.info("Enabled CONFIG_MODULES in build.config.gki.aarch64")
+
     def _configure_zram(self):
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
         with open(config_file, "r") as f:
