@@ -600,6 +600,25 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 f.write(atc)
             logger.info("Fixed atomic_ll_sc.h: added types.h + atomic64_t definition")
 
+
+    def patch_timeconst_kbuild(self):
+        """Patch Kbuild to use default HZ value if CONFIG_HZ is empty"""
+        kbuild_path = self.work_dir / "common/Kbuild"
+        if not kbuild_path.exists():
+            logger.warning("common/Kbuild not found, skipping timeconst patch")
+            return
+        with open(kbuild_path, "r") as f:
+            kbuild = f.read()
+        old = 'filechk_gentimeconst = echo $(CONFIG_HZ) | bc -q $<'
+        new = 'filechk_gentimeconst = echo $(if $(CONFIG_HZ),$(CONFIG_HZ),250) | bc -q $<'
+        if old in kbuild:
+            kbuild = kbuild.replace(old, new)
+            with open(kbuild_path, "w") as f:
+                f.write(kbuild)
+            logger.info("Patched Kbuild: added default HZ=250 for timeconst.h generation")
+        else:
+            logger.info("Kbuild gentimeconst line not found or already patched")
+
     def apply_zram_patches(self):
         if not self.config.use_zram:
             return
@@ -1128,6 +1147,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self.apply_susfs_patches()
             self.apply_sukisu_patches()
             self.fix_atomic_ll_sc()
+        self.patch_timeconst_kbuild()
             self.apply_zram_patches()
             self.apply_task_mmu_fixes()
             self.configure_kernel()
