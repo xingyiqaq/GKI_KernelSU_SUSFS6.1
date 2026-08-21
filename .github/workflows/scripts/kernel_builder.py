@@ -659,6 +659,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(config_file, "a") as f:
                 f.write("CONFIG_DEFAULT_BBR=y\n")
 
+        # Enable CONFIG_MODULES for module build support
+        with open(config_file, "a") as f:
+            f.write("CONFIG_MODULES=y\n")
+            f.write("CONFIG_MODULE_SIG=y\n")
+        logger.info("Enabled CONFIG_MODULES in defconfig")
         build_config = self.work_dir / "common/build.config.gki"
         if build_config.exists():
             with open(build_config, "r") as f:
