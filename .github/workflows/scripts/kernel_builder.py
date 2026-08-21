@@ -1099,6 +1099,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self.add_bbg()
             self.apply_susfs_patches()
             self.apply_sukisu_patches()
+            self.fix_atomic_ll_sc()
             self.apply_zram_patches()
             self.apply_task_mmu_fixes()
             self.configure_kernel()
