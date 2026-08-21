@@ -662,6 +662,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         # Enable CONFIG_MODULES for module build support
         with open(config_file, "a") as f:
             f.write("CONFIG_MODULES=y\n")
+            f.write("CONFIG_FRAME_WARN=2048\n")
             f.write("CONFIG_MODULE_SIG=y\n")
         logger.info("Enabled CONFIG_MODULES in defconfig")
         build_config = self.work_dir / "common/build.config.gki"
