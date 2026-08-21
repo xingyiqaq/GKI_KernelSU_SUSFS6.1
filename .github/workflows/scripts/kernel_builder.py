@@ -629,8 +629,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             preempt = f.read()
         if "current_thread_info" in preempt and "#include <asm/thread_info.h>" not in preempt:
             # Add include after existing includes
-            lines = preempt.split("
-")
+            lines = preempt.split("\n")
             insert_pos = 0
             for i, line in enumerate(lines):
                 if line.startswith("#include") or line.startswith("#define") or line.startswith("#ifndef") or line.startswith("#endif"):
@@ -642,8 +641,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 insert_pos = 1
             lines.insert(insert_pos, "#include <asm/thread_info.h>")
             with open(preempt_path, "w") as f:
-                f.write("
-".join(lines))
+                f.write("\n".join(lines))
             logger.info("Patched asm/preempt.h: added #include <asm/thread_info.h> for current_thread_info")
         else:
             logger.info("asm/preempt.h preempt patch not needed")
