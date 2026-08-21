@@ -620,7 +620,23 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             logger.info("Kbuild gentimeconst line not found or already patched")
 
     def fix_preempt_thread_info(self):
-        """Patch asm/preempt.h to include thread_info.h if current_thread_info is used"""
+        """Ensure required CONFIG symbols and patch asm/preempt.h for current_thread_info"""
+        # Add missing ARM64 CONFIG symbols to defconfig
+        config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
+        if config_file.exists():
+            with open(config_file, "r") as f:
+                defconfig = f.read()
+            additions = []
+            if "CONFIG_ARM64_VA_BITS" not in defconfig:
+                additions.append("CONFIG_ARM64_VA_BITS=48")
+            if "CONFIG_ARM64_PAGE_SHIFT" not in defconfig:
+                additions.append("CONFIG_ARM64_PAGE_SHIFT=12")
+            if additions:
+                defconfig += "\n" + "\n".join(additions) + "\n"
+                with open(config_file, "w") as f:
+                    f.write(defconfig)
+                logger.info(f"Added missing CONFIG symbols: {additions}")
+
         preempt_path = self.work_dir / "common/arch/arm64/include/asm/preempt.h"
         if not preempt_path.exists():
             logger.warning("asm/preempt.h not found, skipping preempt patch")
@@ -628,23 +644,14 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         with open(preempt_path, "r") as f:
             preempt = f.read()
         if "current_thread_info" in preempt and "#include <asm/thread_info.h>" not in preempt:
-            # Add include after existing includes
             lines = preempt.split("\n")
-            insert_pos = 0
-            for i, line in enumerate(lines):
-                if line.startswith("#include") or line.startswith("#define") or line.startswith("#ifndef") or line.startswith("#endif"):
-                    insert_pos = i + 1
-                elif line.strip() and not line.startswith("#"):
-                    break
-            # Insert after the header guard
-            if lines and lines[0].startswith("#ifndef") and len(lines) > 1:
-                insert_pos = 1
+            insert_pos = 1 if lines and lines[0].startswith("#ifndef") else 0
             lines.insert(insert_pos, "#include <asm/thread_info.h>")
             with open(preempt_path, "w") as f:
                 f.write("\n".join(lines))
-            logger.info("Patched asm/preempt.h: added #include <asm/thread_info.h> for current_thread_info")
+            logger.info("Patched asm/preempt.h: added thread_info.h include")
         else:
-            logger.info("asm/preempt.h preempt patch not needed")
+            logger.info("asm/preempt.h patch not needed")
 
     def apply_zram_patches(self):
         if not self.config.use_zram:
