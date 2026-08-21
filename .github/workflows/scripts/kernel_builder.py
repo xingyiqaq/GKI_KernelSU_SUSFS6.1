@@ -620,8 +620,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             logger.info("Kbuild gentimeconst line not found or already patched")
 
     def fix_preempt_thread_info(self):
-        """Ensure required CONFIG symbols and patch asm/preempt.h for current_thread_info"""
-        # Add missing ARM64 CONFIG symbols to defconfig
+        """Define missing CONFIG symbols and patch asm/preempt.h for current_thread_info"""
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
         if config_file.exists():
             with open(config_file, "r") as f:
@@ -637,19 +636,38 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     f.write(defconfig)
                 logger.info(f"Added missing CONFIG symbols: {additions}")
 
+        # Patch asm/preempt.h to define missing CONFIG symbols and include thread_info.h
         preempt_path = self.work_dir / "common/arch/arm64/include/asm/preempt.h"
         if not preempt_path.exists():
             logger.warning("asm/preempt.h not found, skipping preempt patch")
             return
         with open(preempt_path, "r") as f:
             preempt = f.read()
+
+        needs_patch = False
         if "current_thread_info" in preempt and "#include <asm/thread_info.h>" not in preempt:
+            needs_patch = True
+        if "CONFIG_ARM64_VA_BITS" not in preempt and "current_thread_info" in preempt:
+            needs_patch = True
+
+        if needs_patch:
             lines = preempt.split("\n")
             insert_pos = 1 if lines and lines[0].startswith("#ifndef") else 0
-            lines.insert(insert_pos, "#include <asm/thread_info.h>")
+            # Insert CONFIG definitions + thread_info.h include
+            patch_lines = [
+                "#ifndef CONFIG_ARM64_VA_BITS",
+                "#define CONFIG_ARM64_VA_BITS 48",
+                "#endif",
+                "#ifndef CONFIG_ARM64_PAGE_SHIFT",
+                "#define CONFIG_ARM64_PAGE_SHIFT 12",
+                "#endif",
+                "#include <asm/thread_info.h>",
+            ]
+            for i, pline in enumerate(patch_lines):
+                lines.insert(insert_pos + i, pline)
             with open(preempt_path, "w") as f:
                 f.write("\n".join(lines))
-            logger.info("Patched asm/preempt.h: added thread_info.h include")
+            logger.info("Patched asm/preempt.h: added CONFIG defaults + thread_info.h")
         else:
             logger.info("asm/preempt.h patch not needed")
 
