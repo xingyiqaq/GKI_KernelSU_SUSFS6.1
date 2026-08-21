@@ -1147,7 +1147,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self.apply_susfs_patches()
             self.apply_sukisu_patches()
             self.fix_atomic_ll_sc()
-        self.patch_timeconst_kbuild()
+            self.patch_timeconst_kbuild()
             self.apply_zram_patches()
             self.apply_task_mmu_fixes()
             self.configure_kernel()
