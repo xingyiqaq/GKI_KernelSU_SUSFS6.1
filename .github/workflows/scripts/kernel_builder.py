@@ -653,7 +653,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if needs_patch:
             lines = preempt.split("\n")
             insert_pos = 1 if lines and lines[0].startswith("#ifndef") else 0
-            # Insert CONFIG definitions + thread_info.h include
+            # Insert CONFIG definitions + thread_info.h include + current_thread_info stub
             patch_lines = [
                 "#ifndef CONFIG_ARM64_VA_BITS",
                 "#define CONFIG_ARM64_VA_BITS 48",
@@ -662,6 +662,13 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 "#define CONFIG_ARM64_PAGE_SHIFT 12",
                 "#endif",
                 "#include <asm/thread_info.h>",
+                "#ifndef __ASM_OFFSETS_H__",
+                "static inline struct thread_info *current_thread_info(void) {",
+                "    struct thread_info *ti;",
+                "    asm volatile(\"mrs %0, tpidr_el1\" : \"=r\"(ti));",
+                "    return ti;",
+                "}",
+                "#endif",
             ]
             for i, pline in enumerate(patch_lines):
                 lines.insert(insert_pos + i, pline)
