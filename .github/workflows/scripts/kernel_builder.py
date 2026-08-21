@@ -619,8 +619,74 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         else:
             logger.info("Kbuild gentimeconst line not found or already patched")
 
+    def generate_auto_conf(self):
+        """Create a minimal auto.conf with common CONFIG symbols for asm-offsets build"""
+        import os
+        gen_dir = self.work_dir / "common/include/generated"
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        auto_conf = gen_dir / "auto.conf"
+        if auto_conf.exists():
+            logger.info("auto.conf already exists, skipping generation")
+            return
+        conf_lines = [
+            "# Automatically generated file; DO NOT EDIT.",
+            "# Linux kernel version: 6.1.124",
+            "#",
+            "# ARM64 architecture",
+            "#define CONFIG_ARM64 1",
+            "#define CONFIG_64BIT 1",
+            "#define CONFIG_ARM64_VA_BITS 48",
+            "#define CONFIG_ARM64_PA_BITS 48",
+            "#define CONFIG_ARM64_PAGE_SHIFT 12",
+            "#define CONFIG_ARM64_PAGE_SIZE 4096",
+            "#",
+            "# General",
+            "#define CONFIG_SMP 1",
+            "#define CONFIG_PREEMPT 1",
+            "#define CONFIG_MODULES 1",
+            "#define CONFIG_MODULE_UNLOAD 1",
+            "#define CONFIG_BASE_SMALL 0",
+            "#define CONFIG_HZ 250",
+            "#",
+            "# RCU",
+            "#define CONFIG_RCU_TREE 1",
+            "#define CONFIG_RCU_EQS_INLINE 1",
+            "#define CONFIG_RCU_NOCB_CPU 0",
+            "#",
+            "# CPU features",
+            "#define CONFIG_CPU_BIG_ENDIAN 0",
+            "#define CONFIG_ARCH_RANDOM 1",
+            "#",
+            "# Memory",
+            "#define CONFIG_MMU 1",
+            "#define CONFIG_ZONE_DMA 1",
+            "#define CONFIG_ZONE_DMA32 1",
+            "#",
+            "# Filesystems",
+            "#define CONFIG_TMPFS 1",
+            "#",
+            "# Networking",
+            "#define CONFIG_NET 1",
+            "#",
+            "# Security",
+            "#define CONFIG_SECURITY 1",
+            "#define CONFIG_CRYPTO 1",
+            "#",
+            "# Debugging",
+            "#define CONFIG_DEBUG_INFO 1",
+            "#",
+            "# Compiler",
+            "#define CONFIG_CLANG_VERSION 180000",
+            "",
+        ]
+        with open(auto_conf, "w") as f:
+            f.write("\n".join(conf_lines))
+        logger.info(f"Created {auto_conf} with {len(conf_lines)} CONFIG definitions")
+
     def fix_preempt_thread_info(self):
-        """Define missing CONFIG symbols and patch asm/preempt.h for current_thread_info"""
+        """Define missing CONFIG symbols, create auto.conf, and patch asm/preempt.h"""
+        self.generate_auto_conf()
+
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
         if config_file.exists():
             with open(config_file, "r") as f:
