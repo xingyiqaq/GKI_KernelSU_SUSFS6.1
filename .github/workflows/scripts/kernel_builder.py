@@ -573,6 +573,20 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
         self._chdir(self.work_dir)
 
+
+    def fix_atomic_ll_sc(self):
+        """Fix atomic_ll_sc.h: add linux/types.h include for atomic64_t"""
+        atomic_file = self.work_dir / "common/arch/arm64/include/asm/atomic_ll_sc.h"
+        if not atomic_file.exists():
+            return
+        with open(atomic_file, "r") as f:
+            atc = f.read()
+        if "#include <linux/types.h>" not in atc:
+            atc = "#include <linux/types.h>\n" + atc
+            with open(atomic_file, "w") as f:
+                f.write(atc)
+            logger.info("Fixed atomic_ll_sc.h: added linux/types.h include")
+
     def apply_zram_patches(self):
         if not self.config.use_zram:
             return
