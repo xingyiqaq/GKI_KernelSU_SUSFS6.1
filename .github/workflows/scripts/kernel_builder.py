@@ -665,6 +665,8 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "#define CONFIG_MODULE_UNLOAD 1",
             "#define CONFIG_BASE_SMALL 0",
             "#define CONFIG_HZ 250",
+            "#define CONFIG_NR_CPUS 8",
+            "#define CONFIG_NR_CPU_IDS 16384",
             "#define CONFIG_RCU_TREE 1",
             "#define CONFIG_RCU_EQS_INLINE 1",
             "#define CONFIG_RCU_NOCB_CPU 0",
