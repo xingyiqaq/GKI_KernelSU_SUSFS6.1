@@ -596,6 +596,26 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 f.write(atc)
             logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + types.h include")
 
+    def ensure_config_64bit_in_types_h(self):
+        """Ensure CONFIG_64BIT is defined before linux/types.h checks it for atomic64_t"""
+        types_path = self.work_dir / "common/include/linux/types.h"
+        if not types_path.exists():
+            return
+        with open(types_path, "r") as f:
+            content = f.read()
+        if "#ifdef CONFIG_64BIT" in content and "#define CONFIG_64BIT 1  // GKI BUILD" not in content:
+            content = content.replace(
+                "#ifdef CONFIG_64BIT",
+                "#ifndef CONFIG_64BIT
+#define CONFIG_64BIT 1  // GKI BUILD
+#endif
+#ifdef CONFIG_64BIT",
+                1
+            )
+            with open(types_path, "w") as f:
+                f.write(content)
+            logger.info("Fixed linux/types.h: ensured CONFIG_64BIT for atomic64_t definition")
+
 
     def patch_timeconst_kbuild(self):
         """Patch Kbuild to use default HZ value if CONFIG_HZ is empty"""
@@ -1474,6 +1494,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self.apply_susfs_patches()
             self.apply_sukisu_patches()
             self.fix_atomic_ll_sc()
+            self.ensure_config_64bit_in_types_h()
             self.patch_timeconst_kbuild()
             self.fix_preempt_thread_info()
             self.apply_zram_patches()
