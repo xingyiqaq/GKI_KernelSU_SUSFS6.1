@@ -593,8 +593,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             if insert_marker in atc:
                 compat_def = (
                     "/* === GKI BUILD: atomic64_t compat for asm-offsets === */\n"
+                    "struct atomic64_gki { s64 counter; };\n"
                     "#ifndef atomic64_t\n"
-                    "#define atomic64_t struct { s64 counter; }\n"
+                    "#define atomic64_t struct atomic64_gki\n"
                     "#endif\n"
                     "/* === END GKI BUILD === */\n\n"
                 )
