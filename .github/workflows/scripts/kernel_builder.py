@@ -592,7 +592,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             insert_marker = "#ifndef CONFIG_CC_HAS_K_CONSTRAINT"
             if insert_marker in atc:
                 compat_def = (
-                    "/* === GKI BUILD: atomic64_t compat for asm-offsets === */\n"
+                    "/* === GKI BUILD: atomic64_t compat fallback === */\n"
                     "struct atomic64_gki { s64 counter; };\n"
                     "#ifndef atomic64_t\n"
                     "#define atomic64_t struct atomic64_gki\n"
@@ -600,16 +600,28 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     "/* === END GKI BUILD === */\n\n"
                 )
                 atc = atc.replace(insert_marker, compat_def + insert_marker, 1)
-                # Also undef at end of file to prevent leaking into other headers
-                if atc.rstrip().endswith("#endif"):
-                    atc = atc.rstrip() + "\n#undef atomic64_t\n"
-                else:
-                    atc = atc.rstrip() + "\n/* GKI: undef atomic64_t macro */\n#undef atomic64_t\n"
                 modified = True
         if modified:
             with open(atomic_file, "w") as f:
                 f.write(atc)
             logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + types.h + atomic64_t macro fallback")
+
+    def fix_types_h_atomic64(self):
+        """Unconditionally define atomic64_t in linux/types.h for GKI build."""
+        types_path = self.work_dir / "common/include/linux/types.h"
+        if not types_path.exists():
+            return
+        with open(types_path, "r") as f:
+            content = f.read()
+        # Original has atomic64_t guarded by #ifdef CONFIG_64BIT which is not set.
+        if "#ifdef CONFIG_64BIT" in content and "/* GKI: unconditionally define atomic64_t */" not in content:
+            old_block = "#ifdef CONFIG_64BIT\ntypedef struct {\n\ts64 counter;\n} atomic64_t;\n#endif"
+            new_block = "/* GKI: unconditionally define atomic64_t for early build */\ntypedef struct {\n\ts64 counter;\n} atomic64_t;"
+            if old_block in content:
+                content = content.replace(old_block, new_block, 1)
+                with open(types_path, "w") as f:
+                    f.write(content)
+                logger.info("Fixed linux/types.h: unconditionally defined atomic64_t")
 
     def patch_timeconst_kbuild(self):
         """Patch Kbuild to use default HZ value if CONFIG_HZ is empty"""
@@ -1482,6 +1494,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self.apply_susfs_patches()
             self.apply_sukisu_patches()
             self.fix_atomic_ll_sc()
+            self.fix_types_h_atomic64()
             self.patch_timeconst_kbuild()
             self.fix_preempt_thread_info()
             self.apply_zram_patches()
