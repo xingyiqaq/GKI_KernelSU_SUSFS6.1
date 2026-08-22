@@ -600,6 +600,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     "/* === END GKI BUILD === */\n\n"
                 )
                 atc = atc.replace(insert_marker, compat_def + insert_marker, 1)
+                # Also undef at end of file to prevent leaking into other headers
+                if atc.rstrip().endswith("#endif"):
+                    atc = atc.rstrip() + "\n#undef atomic64_t\n"
+                else:
+                    atc = atc.rstrip() + "\n/* GKI: undef atomic64_t macro */\n#undef atomic64_t\n"
                 modified = True
         if modified:
             with open(atomic_file, "w") as f:
