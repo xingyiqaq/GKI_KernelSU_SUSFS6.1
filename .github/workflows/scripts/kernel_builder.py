@@ -586,18 +586,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             atc = "#include <linux/types.h>" + "\n" + atc
             modified = True
         if "typedef struct { long long counter; } atomic64_t" not in atc:
-            # Use a proper header guard macro — atomic64_t is a typedef, not a macro,
-            # so `#ifndef atomic64_t` never fires. Guard with __LINUX_TYPES_H__
-            # (types.h sets it) to avoid redefining if types.h already provides it.
-            atc = atc.replace(
-                "#include <linux/types.h>",
-                "#include <linux/types.h>" + "\n" +
-                "#ifndef __LINUX_TYPES_H__" + "\n" +
-                "typedef struct { long long counter; } atomic64_t;" + "\n" +
-                "#endif",
-                1
-            )
-            modified = True
+            # atomic64_t is defined in linux/types.h; never redefine it here.
+            # Just ensure types.h is included so atomic64_t is available.
+            pass  # types.h already provides atomic64_t; no redefinition needed
         if modified:
             with open(atomic_file, "w") as f:
                 f.write(atc)
@@ -628,9 +619,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         gen_dir = self.work_dir / "common/include/generated"
         gen_dir.mkdir(parents=True, exist_ok=True)
         auto_conf = gen_dir / "auto.conf"
+        # Always regenerate auto.conf — configs may change between runs
         if auto_conf.exists():
-            logger.info("auto.conf already exists, skipping generation")
-            return
+            logger.info(f"Regenerating {auto_conf} (old config may be stale)")
         conf_lines = [
             "# Automatically generated file; DO NOT EDIT.",
             "# Linux kernel version: 6.1.124",
@@ -666,7 +657,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "#define CONFIG_ZONE_DMA 1",
             "#define CONFIG_ZONE_DMA32 1",
             "#define CONFIG_KASAN 0",
-            "#define CONFIG_SLAB 1",
+            "#define CONFIG_SLUB 1",
+            "#define CONFIG_PGTABLE_LEVELS 3",
+            "#define CONFIG_SPLIT_PTLOCK_CPUS 0",
             "#",
             "# Filesystems",
             "#define CONFIG_TMPFS 1",
@@ -683,9 +676,15 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "#",
             "# Compiler",
             "#define CONFIG_CLANG_VERSION 180000",
-            "#define KMALLOC_SHIFT_HIGH 19",
-            "#define KMALLOC_SHIFT_MAX 19",
-            "#define NR_KMALLOC_TYPES 7",
+            "#define CONFIG_KASAN 0",
+            "#define CONFIG_SLAB_DEPRECATED 0",
+            "#define CONFIG_ARCH_HAS_PTE_SPECIAL 1",
+            "#define CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE 1",
+            "#define CONFIG_TRANSPARENT_HUGEPAGE 1",
+            "#define CONFIG_ARCH_WANT_IPC_PARSE_VERSION 1",
+            "#define CONFIG_ARCH_USES_GETTIMEOFFSET 0",
+            "#define CONFIG_KALLSYMS 1",
+            "#define CONFIG_KALLSYMS_ALL 1",
             "",
         ]
         with open(auto_conf, "w") as f:
@@ -754,8 +753,14 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 #ifndef CONFIG_KASAN
 #define CONFIG_KASAN 0
 #endif
-#ifndef CONFIG_SLAB
-#define CONFIG_SLAB 1
+#ifndef CONFIG_SLUB
+#define CONFIG_SLUB 1
+#endif
+#ifndef CONFIG_PGTABLE_LEVELS
+#define CONFIG_PGTABLE_LEVELS 3
+#endif
+#ifndef CONFIG_SPLIT_PTLOCK_CPUS
+#define CONFIG_SPLIT_PTLOCK_CPUS 0
 #endif
 #ifndef CONFIG_CPU_BIG_ENDIAN
 #define CONFIG_CPU_BIG_ENDIAN 0
@@ -900,8 +905,14 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 "#ifndef CONFIG_KASAN",
                 "#define CONFIG_KASAN 0",
                 "#endif",
-                "#ifndef CONFIG_SLAB",
-                "#define CONFIG_SLAB 1",
+                "#ifndef CONFIG_SLUB",
+                "#define CONFIG_SLUB 1",
+                "#endif",
+                "#ifndef CONFIG_PGTABLE_LEVELS",
+                "#define CONFIG_PGTABLE_LEVELS 3",
+                "#endif",
+                "#ifndef CONFIG_SPLIT_PTLOCK_CPUS",
+                "#define CONFIG_SPLIT_PTLOCK_CPUS 0",
                 "#endif",
                 "#ifndef CONFIG_PREEMPT",
                 "#define CONFIG_PREEMPT 1",
