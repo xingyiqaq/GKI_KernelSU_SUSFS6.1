@@ -586,10 +586,13 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             atc = "#include <linux/types.h>" + "\n" + atc
             modified = True
         if "typedef struct { long long counter; } atomic64_t" not in atc:
+            # Use a proper header guard macro — atomic64_t is a typedef, not a macro,
+            # so `#ifndef atomic64_t` never fires. Guard with __LINUX_TYPES_H__
+            # (types.h sets it) to avoid redefining if types.h already provides it.
             atc = atc.replace(
                 "#include <linux/types.h>",
                 "#include <linux/types.h>" + "\n" +
-                "#ifndef atomic64_t" + "\n" +
+                "#ifndef __LINUX_TYPES_H__" + "\n" +
                 "typedef struct { long long counter; } atomic64_t;" + "\n" +
                 "#endif",
                 1
@@ -651,6 +654,8 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "# RCU",
             "#define CONFIG_RCU_TREE 1",
             "#define CONFIG_RCU_EQS_INLINE 1",
+            "#define CONFIG_RCU_NOCB_CPU 0",
+            "#define CONFIG_RCU_NOCB_CPU_ALL 0",
             "#",
             "# CPU features",
             "#define CONFIG_CPU_BIG_ENDIAN 0",
@@ -660,6 +665,8 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "#define CONFIG_MMU 1",
             "#define CONFIG_ZONE_DMA 1",
             "#define CONFIG_ZONE_DMA32 1",
+            "#define CONFIG_KASAN 0",
+            "#define CONFIG_SLAB 1",
             "#",
             "# Filesystems",
             "#define CONFIG_TMPFS 1",
@@ -676,6 +683,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "#",
             "# Compiler",
             "#define CONFIG_CLANG_VERSION 180000",
+            "#define KMALLOC_SHIFT_HIGH 19",
+            "#define KMALLOC_SHIFT_MAX 19",
+            "#define NR_KMALLOC_TYPES 7",
             "",
         ]
         with open(auto_conf, "w") as f:
@@ -735,6 +745,18 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 #ifndef CONFIG_RCU_EQS_INLINE
 #define CONFIG_RCU_EQS_INLINE 1
 #endif
+#ifndef CONFIG_RCU_NOCB_CPU
+#define CONFIG_RCU_NOCB_CPU 0
+#endif
+#ifndef CONFIG_RCU_NOCB_CPU_ALL
+#define CONFIG_RCU_NOCB_CPU_ALL 0
+#endif
+#ifndef CONFIG_KASAN
+#define CONFIG_KASAN 0
+#endif
+#ifndef CONFIG_SLAB
+#define CONFIG_SLAB 1
+#endif
 #ifndef CONFIG_CPU_BIG_ENDIAN
 #define CONFIG_CPU_BIG_ENDIAN 0
 #endif
@@ -767,6 +789,16 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 #endif
 #ifndef CONFIG_CLANG_VERSION
 #define CONFIG_CLANG_VERSION 180000
+#endif
+/* Memory allocator constants needed for asm-offsets */
+#ifndef KMALLOC_SHIFT_HIGH
+#define KMALLOC_SHIFT_HIGH 19
+#endif
+#ifndef KMALLOC_SHIFT_MAX
+#define KMALLOC_SHIFT_MAX 19
+#endif
+#ifndef NR_KMALLOC_TYPES
+#define NR_KMALLOC_TYPES 7
 #endif
 #ifndef __ASM_CONST
 #define __ASM_CONST(x) .quad x
@@ -858,6 +890,18 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 "#endif",
                 "#ifndef CONFIG_RCU_EQS_INLINE",
                 "#define CONFIG_RCU_EQS_INLINE 1",
+                "#endif",
+                "#ifndef CONFIG_RCU_NOCB_CPU",
+                "#define CONFIG_RCU_NOCB_CPU 0",
+                "#endif",
+                "#ifndef CONFIG_RCU_NOCB_CPU_ALL",
+                "#define CONFIG_RCU_NOCB_CPU_ALL 0",
+                "#endif",
+                "#ifndef CONFIG_KASAN",
+                "#define CONFIG_KASAN 0",
+                "#endif",
+                "#ifndef CONFIG_SLAB",
+                "#define CONFIG_SLAB 1",
                 "#endif",
                 "#ifndef CONFIG_PREEMPT",
                 "#define CONFIG_PREEMPT 1",
