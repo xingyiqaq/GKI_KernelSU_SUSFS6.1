@@ -606,10 +606,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if "#ifdef CONFIG_64BIT" in content and "#define CONFIG_64BIT 1  // GKI BUILD" not in content:
             content = content.replace(
                 "#ifdef CONFIG_64BIT",
-                "#ifndef CONFIG_64BIT
-#define CONFIG_64BIT 1  // GKI BUILD
-#endif
-#ifdef CONFIG_64BIT",
+                "#ifndef CONFIG_64BIT\n#define CONFIG_64BIT 1  // GKI BUILD\n#endif\n#ifdef CONFIG_64BIT",
                 1
             )
             with open(types_path, "w") as f:
