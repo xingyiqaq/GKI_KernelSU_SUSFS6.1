@@ -719,6 +719,28 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             f.write("\n".join(conf_lines))
         logger.info(f"Created {auto_conf} with {len(conf_lines)} CONFIG definitions")
 
+    def patch_compiler_types_h(self):
+        """Force-include auto.conf from compiler_types.h so CONFIGs are globally available."""
+        compiler_path = self.work_dir / "common/include/linux/compiler_types.h"
+        if not compiler_path.exists():
+            return
+        with open(compiler_path, "r") as f:
+            content = f.read()
+        if "/* GKI: include auto.conf for CONFIG definitions */" not in content:
+            include_line = "#include \"generated/auto.conf\""
+            marker = "#ifndef __LINUX_COMPILER_TYPES_H"
+            if marker in content:
+                content = content.replace(
+                    marker,
+                    "/* GKI: include auto.conf for CONFIG definitions */\n"
+                    "#include \"generated/auto.conf\"\n\n"
+                    + marker,
+                    1
+                )
+                with open(compiler_path, "w") as f:
+                    f.write(content)
+                logger.info("Patched compiler_types.h: included generated/auto.conf")
+
     def patch_asm_offsets_c(self):
         """Patch asm-offsets.c to define missing CONFIG symbols before includes"""
         offsets_path = self.work_dir / "common/arch/arm64/kernel/asm-offsets.c"
@@ -852,6 +874,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
     def fix_preempt_thread_info(self):
         """Define missing CONFIG symbols, create auto.conf, and patch asm/preempt.h"""
         self.generate_auto_conf()
+        self.patch_compiler_types_h()
         self.patch_asm_offsets_c()
 
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
