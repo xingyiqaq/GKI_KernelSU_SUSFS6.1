@@ -583,16 +583,27 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             atc = f.read()
         modified = False
         if "#include <linux/types.h>" not in atc:
-            # atomic64_t may be defined in asm-generic/types.h or linux/types.h.
-            # Include BOTH to ensure coverage, and define CONFIG_64BIT first.
-            atc = "#define CONFIG_64BIT 1\n" + "#include <asm-generic/types.h>\n" + "#include <linux/types.h>" + "\n" + atc
+            atc = "#define CONFIG_64BIT 1\n" + "#include <linux/types.h>" + "\n" + atc
             modified = True
-        if "typedef struct { long long counter; } atomic64_t" not in atc:
-            pass
+        # atomic64_t is not reliably defined in GKI's early build headers.
+        # Define it as a macro expanding to an anonymous struct — this works
+        # with v->counter access and avoids typedef redefinition conflicts.
+        if "#define atomic64_t struct" not in atc:
+            insert_marker = "#ifndef CONFIG_CC_HAS_K_CONSTRAINT"
+            if insert_marker in atc:
+                compat_def = (
+                    "/* === GKI BUILD: atomic64_t compat for asm-offsets === */\n"
+                    "#ifndef atomic64_t\n"
+                    "#define atomic64_t struct { s64 counter; }\n"
+                    "#endif\n"
+                    "/* === END GKI BUILD === */\n\n"
+                )
+                atc = atc.replace(insert_marker, compat_def + insert_marker, 1)
+                modified = True
         if modified:
             with open(atomic_file, "w") as f:
                 f.write(atc)
-            logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + asm-generic/types.h + linux/types.h")
+            logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + types.h + atomic64_t macro fallback")
 
     def patch_timeconst_kbuild(self):
         """Patch Kbuild to use default HZ value if CONFIG_HZ is empty"""
