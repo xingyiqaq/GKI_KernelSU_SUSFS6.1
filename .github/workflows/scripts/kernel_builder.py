@@ -583,36 +583,16 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             atc = f.read()
         modified = False
         if "#include <linux/types.h>" not in atc:
-            # atomic64_t in linux/types.h is guarded by #ifdef CONFIG_64BIT,
-            # so we must define it BEFORE types.h is included.
-            atc = "#define CONFIG_64BIT 1\n" + "#include <linux/types.h>" + "\n" + atc
+            # atomic64_t may be defined in asm-generic/types.h or linux/types.h.
+            # Include BOTH to ensure coverage, and define CONFIG_64BIT first.
+            atc = "#define CONFIG_64BIT 1\n" + "#include <asm-generic/types.h>\n" + "#include <linux/types.h>" + "\n" + atc
             modified = True
         if "typedef struct { long long counter; } atomic64_t" not in atc:
-            # atomic64_t is defined in linux/types.h; never redefine it here.
-            # Just ensure types.h is included so atomic64_t is available.
-            pass  # types.h already provides atomic64_t; no redefinition needed
+            pass
         if modified:
             with open(atomic_file, "w") as f:
                 f.write(atc)
-            logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + types.h include")
-
-    def ensure_config_64bit_in_types_h(self):
-        """Ensure CONFIG_64BIT is defined before linux/types.h checks it for atomic64_t"""
-        types_path = self.work_dir / "common/include/linux/types.h"
-        if not types_path.exists():
-            return
-        with open(types_path, "r") as f:
-            content = f.read()
-        if "#ifdef CONFIG_64BIT" in content and "#define CONFIG_64BIT 1  // GKI BUILD" not in content:
-            content = content.replace(
-                "#ifdef CONFIG_64BIT",
-                "#ifndef CONFIG_64BIT\n#define CONFIG_64BIT 1  // GKI BUILD\n#endif\n#ifdef CONFIG_64BIT",
-                1
-            )
-            with open(types_path, "w") as f:
-                f.write(content)
-            logger.info("Fixed linux/types.h: ensured CONFIG_64BIT for atomic64_t definition")
-
+            logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + asm-generic/types.h + linux/types.h")
 
     def patch_timeconst_kbuild(self):
         """Patch Kbuild to use default HZ value if CONFIG_HZ is empty"""
@@ -831,18 +811,12 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
 """
         if "AUTO-ADDED CONFIG DEFINITIONS" not in content:
-            # Insert after the first include or at the top
-            lines = content.split("\n")
-            insert_pos = 0
-            for i, line in enumerate(lines):
-                if line.startswith("#include"):
-                    insert_pos = i
-                    break
-            lines.insert(insert_pos, config_defs)
-            content = "\n".join(lines)
+            # Insert at the VERY top of the file (position 0) to ensure
+            # CONFIG definitions are processed before ANY includes.
+            content = config_defs + "\n" + content
             with open(offsets_path, "w") as f:
                 f.write(content)
-            logger.info("Patched asm-offsets.c: added CONFIG definitions")
+            logger.info("Patched asm-offsets.c: added CONFIG definitions at top")
         else:
             logger.info("asm-offsets.c already patched")
 
@@ -1491,7 +1465,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self.apply_susfs_patches()
             self.apply_sukisu_patches()
             self.fix_atomic_ll_sc()
-            self.ensure_config_64bit_in_types_h()
             self.patch_timeconst_kbuild()
             self.fix_preempt_thread_info()
             self.apply_zram_patches()
