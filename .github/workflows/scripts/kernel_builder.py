@@ -583,7 +583,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             atc = f.read()
         modified = False
         if "#include <linux/types.h>" not in atc:
-            atc = "#include <linux/types.h>" + "\n" + atc
+            # atomic64_t in linux/types.h is guarded by #ifdef CONFIG_64BIT,
+            # so we must define it BEFORE types.h is included.
+            atc = "#define CONFIG_64BIT 1\n" + "#include <linux/types.h>" + "\n" + atc
             modified = True
         if "typedef struct { long long counter; } atomic64_t" not in atc:
             # atomic64_t is defined in linux/types.h; never redefine it here.
@@ -592,7 +594,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if modified:
             with open(atomic_file, "w") as f:
                 f.write(atc)
-            logger.info("Fixed atomic_ll_sc.h: added types.h + atomic64_t definition")
+            logger.info("Fixed atomic_ll_sc.h: added CONFIG_64BIT + types.h include")
 
 
     def patch_timeconst_kbuild(self):
