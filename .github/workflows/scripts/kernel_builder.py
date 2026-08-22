@@ -1098,7 +1098,27 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             f.write("CONFIG_FRAME_WARN=2048\n")
             f.write("CONFIG_MODULE_SIG=y\n")
             f.write("CONFIG_HZ=250\n")
-        logger.info("Enabled CONFIG_MODULES + HZ in defconfig")
+            # Additional CONFIGs needed for module build phase
+            f.write("CONFIG_RCU_TREE=y\n")
+            f.write("CONFIG_RCU_EQS_INLINE=y\n")
+            f.write("CONFIG_RCU_NOCB_CPU_NONE=y\n")
+            f.write("CONFIG_RCU_NOCB_CPU=n\n")
+            f.write("CONFIG_RCU_FAST_NO_HZ=y\n")
+            f.write("CONFIG_TREE_RCU=y\n")
+            f.write("CONFIG_LOCKDEP=n\n")
+            f.write("CONFIG_DEBUG_LOCK_ALLOC=n\n")
+            f.write("CONFIG_PROVE_LOCKING=n\n")
+            f.write("CONFIG_PROVE_RCU=n\n")
+            f.write("CONFIG_SLUB=y\n")
+            f.write("CONFIG_MMU=y\n")
+            f.write("CONFIG_THREAD_INFO_IN_TASK=y\n")
+            f.write("CONFIG_ARCH_ELF_STATE=y\n")
+            f.write("CONFIG_NR_CPUS=8\n")
+            f.write("CONFIG_ARM64_VA_BITS=48\n")
+            f.write("CONFIG_ARM64_PAGE_SHIFT=12\n")
+            f.write("CONFIG_SMP=y\n")
+            f.write("CONFIG_PREEMPT=y\n")
+        logger.info("Enabled CONFIG_MODULES + HZ + more in defconfig")
         build_config = self.work_dir / "common/build.config.gki"
         if build_config.exists():
             with open(build_config, "r") as f:
@@ -1117,9 +1137,27 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 if "CONFIG_MODULES=y" not in _bc:
                     _bc += "\nCONFIG_MODULES=y\n"
                     _bc += "\nCONFIG_FRAME_WARN=2048\n"
+                # Add additional CONFIGs needed for module build
+                extra_configs = [
+                    "CONFIG_RCU_TREE=y",
+                    "CONFIG_RCU_EQS_INLINE=y",
+                    "CONFIG_RCU_NOCB_CPU_NONE=y",
+                    "CONFIG_RCU_NOCB_CPU=n",
+                    "CONFIG_LOCKDEP=n",
+                    "CONFIG_SLUB=y",
+                    "CONFIG_MMU=y",
+                    "CONFIG_THREAD_INFO_IN_TASK=y",
+                    "CONFIG_ARCH_ELF_STATE=y",
+                    "CONFIG_NR_CPUS=8",
+                    "CONFIG_SMP=y",
+                    "CONFIG_PREEMPT=y",
+                ]
+                for ec in extra_configs:
+                    if ec.split("=")[0] not in _bc:
+                        _bc += f"\n{ec}\n"
                 with open(build_config_a64, "w") as _f:
                     _f.write(_bc)
-                logger.info("Enabled CONFIG_MODULES in build.config.gki.aarch64")
+                logger.info("Enabled CONFIG_MODULES + more in build.config.gki.aarch64")
 
     def _configure_zram(self):
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
