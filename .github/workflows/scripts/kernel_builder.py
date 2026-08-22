@@ -651,7 +651,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "# RCU",
             "#define CONFIG_RCU_TREE 1",
             "#define CONFIG_RCU_EQS_INLINE 1",
-            "#define CONFIG_RCU_NOCB_CPU 0",
             "#",
             "# CPU features",
             "#define CONFIG_CPU_BIG_ENDIAN 0",
@@ -683,9 +682,118 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             f.write("\n".join(conf_lines))
         logger.info(f"Created {auto_conf} with {len(conf_lines)} CONFIG definitions")
 
+    def patch_asm_offsets_c(self):
+        """Patch asm-offsets.c to define missing CONFIG symbols before includes"""
+        offsets_path = self.work_dir / "common/arch/arm64/kernel/asm-offsets.c"
+        if not offsets_path.exists():
+            logger.warning("asm-offsets.c not found, skipping patch")
+            return
+        with open(offsets_path, "r") as f:
+            content = f.read()
+
+        config_defs = """
+/* === AUTO-ADDED CONFIG DEFINITIONS FOR GKI BUILD === */
+#ifndef CONFIG_HZ
+#define CONFIG_HZ 250
+#endif
+#ifndef HZ
+#define HZ 250
+#endif
+#ifndef CONFIG_ARM64
+#define CONFIG_ARM64 1
+#endif
+#ifndef CONFIG_64BIT
+#define CONFIG_64BIT 1
+#endif
+#ifndef CONFIG_ARM64_VA_BITS
+#define CONFIG_ARM64_VA_BITS 48
+#endif
+#ifndef CONFIG_ARM64_PA_BITS
+#define CONFIG_ARM64_PA_BITS 48
+#endif
+#ifndef CONFIG_ARM64_PAGE_SHIFT
+#define CONFIG_ARM64_PAGE_SHIFT 12
+#endif
+#ifndef CONFIG_ARM64_PAGE_SIZE
+#define CONFIG_ARM64_PAGE_SIZE 4096
+#endif
+#ifndef CONFIG_PREEMPT
+#define CONFIG_PREEMPT 1
+#endif
+#ifndef CONFIG_MODULES
+#define CONFIG_MODULES 1
+#endif
+#ifndef CONFIG_MODULE_UNLOAD
+#define CONFIG_MODULE_UNLOAD 1
+#endif
+#ifndef CONFIG_BASE_SMALL
+#define CONFIG_BASE_SMALL 0
+#endif
+#ifndef CONFIG_RCU_TREE
+#define CONFIG_RCU_TREE 1
+#endif
+#ifndef CONFIG_RCU_EQS_INLINE
+#define CONFIG_RCU_EQS_INLINE 1
+#endif
+#ifndef CONFIG_CPU_BIG_ENDIAN
+#define CONFIG_CPU_BIG_ENDIAN 0
+#endif
+#ifndef CONFIG_ARCH_RANDOM
+#define CONFIG_ARCH_RANDOM 1
+#endif
+#ifndef CONFIG_MMU
+#define CONFIG_MMU 1
+#endif
+#ifndef CONFIG_ZONE_DMA
+#define CONFIG_ZONE_DMA 1
+#endif
+#ifndef CONFIG_ZONE_DMA32
+#define CONFIG_ZONE_DMA32 1
+#endif
+#ifndef CONFIG_TMPFS
+#define CONFIG_TMPFS 1
+#endif
+#ifndef CONFIG_NET
+#define CONFIG_NET 1
+#endif
+#ifndef CONFIG_SECURITY
+#define CONFIG_SECURITY 1
+#endif
+#ifndef CONFIG_CRYPTO
+#define CONFIG_CRYPTO 1
+#endif
+#ifndef CONFIG_DEBUG_INFO
+#define CONFIG_DEBUG_INFO 1
+#endif
+#ifndef CONFIG_CLANG_VERSION
+#define CONFIG_CLANG_VERSION 180000
+#endif
+#ifndef __ASM_CONST
+#define __ASM_CONST(x) .quad x
+#endif
+/* === END AUTO-ADDED CONFIG DEFINITIONS === */
+
+"""
+        if "AUTO-ADDED CONFIG DEFINITIONS" not in content:
+            # Insert after the first include or at the top
+            lines = content.split("\n")
+            insert_pos = 0
+            for i, line in enumerate(lines):
+                if line.startswith("#include"):
+                    insert_pos = i
+                    break
+            lines.insert(insert_pos, config_defs)
+            content = "\n".join(lines)
+            with open(offsets_path, "w") as f:
+                f.write(content)
+            logger.info("Patched asm-offsets.c: added CONFIG definitions")
+        else:
+            logger.info("asm-offsets.c already patched")
+
     def fix_preempt_thread_info(self):
         """Define missing CONFIG symbols, create auto.conf, and patch asm/preempt.h"""
         self.generate_auto_conf()
+        self.patch_asm_offsets_c()
 
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
         if config_file.exists():
@@ -739,23 +847,20 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 "#ifndef CONFIG_ARCH_RANDOM",
                 "#define CONFIG_ARCH_RANDOM 1",
                 "#endif",
+                "#ifndef __ASM_CONST",
+                "#define __ASM_CONST(x) .quad x",
+                "#endif",
                 "#ifndef CONFIG_BASE_SMALL",
                 "#define CONFIG_BASE_SMALL 0",
                 "#endif",
                 "#ifndef CONFIG_RCU_TREE",
                 "#define CONFIG_RCU_TREE 1",
                 "#endif",
-                "#ifndef CONFIG_RCU_NOCB_CPU",
-                "#define CONFIG_RCU_NOCB_CPU 0",
-                "#endif",
                 "#ifndef CONFIG_RCU_EQS_INLINE",
                 "#define CONFIG_RCU_EQS_INLINE 1",
                 "#endif",
                 "#ifndef CONFIG_PREEMPT",
                 "#define CONFIG_PREEMPT 1",
-                "#endif",
-                "#ifndef CONFIG_SMP",
-                "#define CONFIG_SMP 1",
                 "#endif",
                 "#ifndef CONFIG_MODULES",
                 "#define CONFIG_MODULES 1",
