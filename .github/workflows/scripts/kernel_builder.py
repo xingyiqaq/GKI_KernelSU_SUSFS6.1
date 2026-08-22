@@ -758,6 +758,83 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     f.write(content)
                 logger.info("Patched compiler_types.h: included generated/auto.conf")
 
+    def patch_module_build_headers(self):
+        """Patch headers with CONFIG definitions for module build phase."""
+        common_dir = self.work_dir / "common"
+
+        patches = [
+            ("include/linux/srcu.h", [
+                ("CONFIG_LOCKDEP", "0"),
+                ("CONFIG_DEBUG_LOCK_ALLOC", "0"),
+                ("CONFIG_PROVE_LOCKING", "0"),
+            ]),
+            ("include/linux/slab.h", [
+                ("CONFIG_SLUB", "1"),
+                ("CONFIG_SLAB", "0"),
+                ("CONFIG_SLAB_DEPRECATED", "0"),
+            ]),
+            ("include/linux/sched/task.h", [
+                ("CONFIG_THREAD_INFO_IN_TASK", "1"),
+            ]),
+            ("include/linux/cred.h", [
+                ("CONFIG_RCU_TREE", "1"),
+                ("CONFIG_RCU_EQS_INLINE", "1"),
+            ]),
+            ("include/linux/elf.h", [
+                ("CONFIG_ARCH_ELF_STATE", "1"),
+            ]),
+            ("include/linux/pgtable.h", [
+                ("CONFIG_ARCH_HAS_PTE_DEVMAP", "1"),
+                ("CONFIG_MMU", "1"),
+            ]),
+            ("include/linux/mm.h", [
+                ("CONFIG_MMU", "1"),
+                ("CONFIG_PGTABLE_LEVELS", "3"),
+                ("CONFIG_TRANSPARENT_HUGEPAGE", "1"),
+            ]),
+            ("include/linux/rcupdate.h", [
+                ("CONFIG_RCU_TREE", "1"),
+                ("CONFIG_RCU_EQS_INLINE", "1"),
+                ("CONFIG_RCU_FAST_NO_HZ", "1"),
+                ("CONFIG_TREE_RCU", "1"),
+            ]),
+        ]
+
+        for rel_path, configs in patches:
+            header = common_dir / rel_path
+            if not header.exists():
+                logger.warning(f"Header not found: {rel_path}, skipping")
+                continue
+            with open(header, "r") as f:
+                content = f.read()
+            if "/* GKI MODULE BUILD: CONFIG definitions */" in content:
+                logger.info(f"Header already patched: {rel_path}")
+                continue
+
+            config_defs = [
+                "/* GKI MODULE BUILD: CONFIG definitions for module prepare */"
+            ]
+            for cfg, val in configs:
+                if val == "0":
+                    # For "disabled" configs, undefine them completely so
+                    # #ifdef checks return false (not just #define as 0)
+                    config_defs.append(f"#undef {cfg}")
+                else:
+                    config_defs.append(f"#undef {cfg}")
+                    config_defs.append(f"#define {cfg} {val}")
+
+            config_block = "\n".join(config_defs)
+
+            if content.startswith("#ifndef"):
+                first_line_end = content.find("\n")
+                content = content[:first_line_end + 1] + config_block + "\n" + content[first_line_end + 1:]
+            else:
+                content = config_block + "\n" + content
+
+            with open(header, "w") as f:
+                f.write(content)
+            logger.info(f"Patched {rel_path}: added {len(configs)} CONFIG definitions")
+
     def patch_asm_offsets_c(self):
         """Patch asm-offsets.c to define missing CONFIG symbols before includes"""
         offsets_path = self.work_dir / "common/arch/arm64/kernel/asm-offsets.c"
@@ -892,6 +969,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         """Define missing CONFIG symbols, create auto.conf, and patch asm/preempt.h"""
         self.generate_auto_conf()
         self.patch_compiler_types_h()
+        self.patch_module_build_headers()
         self.patch_asm_offsets_c()
 
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
